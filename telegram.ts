@@ -5,7 +5,7 @@
 // Toute commande d'action passe par une confirmation ✅/❌ (sauf recall et flags, urgents).
 import {
   api, planAttack, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
-  getFlags, setFlag, pause, resume, getHealth, statusSummary, planetsSummary, fleetsSummary, threatsSummary,
+  getFlags, setFlag, pause, resume, getHealth, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
   PRESETS, CARGO, log, type FleetPlan, type Flags,
 } from "./bot.ts";
 import { MISSIONS, planetByName, type Mission, type Res, type State } from "./spacek-client.ts";
@@ -89,7 +89,18 @@ const coordsOf = (s: State, q: string) => { const p = planetByName(s, q); if (p)
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
 // ---------- Commandes ----------
-const HELP = `Lecture
+// Commandes courtes (les tiennes) — toujours depuis Père
+const HELP = `Mes commandes
+/flotte — mes vaisseaux (par planète + en vol)
+/p0 under 12:9 — attaque 6 croiseurs + 10 GT, attendre l'allié ✔
+/p0 over 12:9 — attaque 7 croiseurs + 10 GT, attendre l'allié ✔
+/status · /threats · /recall <fleetId>
+/save on|off · /collect on|off · /pause · /resume
+/token <refresh_token> — renouveler le token Keycloak (tous les 7 j max)
+
+/help full — toutes les commandes détaillées`;
+
+const HELP_FULL = `Lecture
 /status · /planets · /fleets · /threats · /presets · /flags
 
 Actions (confirmation ✅/❌)
@@ -116,12 +127,18 @@ async function handle(text: string, chatId: string) {
   const planet = (s: State, q: string) => { const p = planetByName(s, q); if (!p) throw new Error(`Planète inconnue : ${q}`); return p; };
 
   switch (cmd) {
-    case "/help": case "/start": return send(HELP, chatId);
+    case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : HELP, chatId);
+    case "/flotte": case "/flottes": return send(await withState(shipsSummary), chatId);
+    case "/p0": {
+      // /p0 under 12:9 · /p0 over 12:9 — preset « p0 <variante> », toujours depuis Père, rallier ✔
+      need(args, 2, "/p0 under|over <sys:pos>");
+      return fleetAction(await withState((s) => planAttack(s, `p0 ${args[0]}`, args[1])));
+    }
     case "/status": return send(await withState(statusSummary), chatId);
     case "/planets": return send(await withState(planetsSummary), chatId);
     case "/fleets": return send(await withState(fleetsSummary), chatId);
     case "/threats": return send(await withState(threatsSummary), chatId);
-    case "/presets": return send(Object.entries(PRESETS).map(([k, v]) => `• ${k} : ${Object.entries(v).map(([s, n]) => `${n} ${s}`).join(", ")}`).join("\n"), chatId);
+    case "/presets": return send(Object.entries(PRESETS).map(([k, v]) => `• /${k} <sys:pos> : ${Object.entries(v.ships).map(([s, n]) => `${n} ${s}`).join(", ")}${v.rallier ? " · attendre l'allié ✔" : ""}`).join("\n"), chatId);
     case "/flags": return send(flagsStr(getFlags()), chatId);
 
     case "/save": case "/supply": case "/collect": {
@@ -133,6 +150,12 @@ async function handle(text: string, chatId: string) {
     }
     case "/pause": return send(`⏸ Pause\n${flagsStr(pause())}`, chatId);
     case "/resume": return send(`▶️ Reprise\n${flagsStr(resume())}`, chatId);
+    case "/token": {
+      // Renouvellement du refresh token Keycloak depuis Telegram (pas besoin de ssh). Testé immédiatement.
+      need(args, 1, "/token <refresh_token>");
+      await api.setRefreshToken(args[0]);
+      return send("🔑 Refresh token remplacé et auth re-testée : OK ✅", chatId);
+    }
     case "/recall": { need(args, 1, "/recall <fleetId>"); return send(`RECALL ${args[0]} → ${short(await api.recall(args[0]))}`, chatId); }
 
     case "/attack": {
@@ -202,7 +225,7 @@ async function poll() {
         const chatId = String(msg.chat.id);
         if (!CHAT_ID) { log("chat id reçu :", chatId, "(mets TG_CHAT_ID dans .env)"); send(`Ton chat id est ${chatId} — mets TG_CHAT_ID=${chatId} dans .env et relance.`, chatId); continue; }
         if (chatId !== CHAT_ID) continue; // silence pour les inconnus
-        log("TG <", msg.text);
+        log("TG <", msg.text.startsWith("/token") ? "/token <masqué>" : msg.text);
         await handle(msg.text, chatId).catch((e: any) => send(`❌ ${e.message}`, chatId));
       }
     } catch (e: any) { log("TG poll KO", e.message); await new Promise((r) => setTimeout(r, 5_000)); }

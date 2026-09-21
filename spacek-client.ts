@@ -97,7 +97,10 @@ export class SpaceK {
         refresh_token: readFileSync(this.refreshFile, "utf8").trim(),
       }),
     });
-    if (!r.ok) throw new Error(`Keycloak ${r.status} : re-login Kaiya (fenêtre privée) + recopier refresh_token`);
+    if (!r.ok) {
+      const detail = (await r.text()).slice(0, 120);
+      throw new Error(`🔑 Refresh token refusé par Keycloak (${r.status} ${detail}). Reconnecte-toi sur kaiya.kreactive.fr en fenêtre privée, copie localStorage.refresh_token et envoie-le au bot : /token <valeur>`);
+    }
     const j: any = await r.json();
     if (j.refresh_token) this.saveRefresh(j.refresh_token);
     return j.access_token;
@@ -159,6 +162,15 @@ export class SpaceK {
   /** Force un nouveau mint au prochain appel (ex. après un 401). */
   invalidate() { this.session = null; }
 
+  /** Remplace le refresh token (ex. via /token sur Telegram) et re-teste immédiatement l'auth. */
+  async setRefreshToken(token: string) {
+    const t = token.trim();
+    if (!/^[A-Za-z0-9._-]{50,}$/.test(t)) throw new Error("Ce n'est pas un refresh token (attendu : une longue chaîne eyJ…)");
+    this.saveRefresh(t);
+    this.session = null;
+    await this.mint(); // lève une erreur claire si le token est refusé
+  }
+
   private async call<T = any>(path: string, body?: object, retry = true): Promise<T> {
     const tok = await this.token();
     const r = await fetch(`${API}${path}`, {
@@ -203,10 +215,19 @@ export class SpaceK {
 
   // ---------- Flottes ----------
   // [TESTÉ en transport] ; autres missions [BUNDLE]. coords sans galaxy.
+  // Champs optionnels lus dans le bundle (21/09/2026) : `rallier: true` (case « Ralliement » / attendre l'allié, attaque),
+  // `heures` (durée d'expédition), `holdHours` (garde sur balise), `coords.body: "moon"` (viser la lune). [BUNDLE]
   sendFleet = (f: {
-    planetId: string; mission: Mission; coords: Coords;
+    planetId: string; mission: Mission; coords: Coords & { body?: "moon" };
     ships: Record<string, number>; cargo?: Res; speedPercent?: number;
-  }) => this.call("/fleet", { speedPercent: 100, cargo: { metal: 0, crystal: 0, deuterium: 0 }, ...f });
+    rallier?: boolean; heures?: number; holdHours?: number;
+  }) => {
+    const { rallier, heures, holdHours, ...rest } = f;
+    return this.call("/fleet", {
+      speedPercent: 100, cargo: { metal: 0, crystal: 0, deuterium: 0 }, ...rest,
+      ...(rallier ? { rallier: true } : {}), ...(heures != null ? { heures } : {}), ...(holdHours != null ? { holdHours } : {}),
+    });
+  };
   recall = (fleetId: string) => this.call("/fleet/recall", { fleetId });                     // [BUNDLE]
   ralliement = (fleetId: string) => this.call("/fleet/ralliement/lancer", { fleetId });     // [BUNDLE] rôle inconnu
   missiles = (planetId: string, coords: Coords, qty: number, target: string) =>

@@ -11,10 +11,10 @@ import { SpaceK, type Coords, type Fleet, type Mission, type Planet, type Res, t
 export const PERE = "pl_2w";
 
 // ================= CONFIG =================
-export const PRESETS: Record<string, Record<string, number>> = {
-  p0: { cruiser: 7, largeCargo: 10 },   // avec butin
-  "p0-sec": { cruiser: 7 },             // sans butin
-  // p1: { ... },                        // ← composition à fournir
+// Toujours depuis Père, toujours avec « attendre l'allié » (rallier). Telegram : /p0 under 12:9 · /p0 over 12:9
+export const PRESETS: Record<string, { ships: Record<string, number>; rallier: boolean }> = {
+  "p0 under": { ships: { cruiser: 6, largeCargo: 10 }, rallier: true },
+  "p0 over":  { ships: { cruiser: 7, largeCargo: 10 }, rallier: true },
 };
 
 // Stock minimal visé sur chaque colonie, complété depuis Père (vide = désactivé)
@@ -84,11 +84,11 @@ export async function getState(): Promise<State> {
 
 // ---------- Envoi de flotte générique (vérifs + résumé, exécution séparée pour la confirmation Telegram) ----------
 export type FleetPlan = {
-  payload: { planetId: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo: Res; speedPercent: number };
+  payload: { planetId: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo: Res; speedPercent: number; rallier?: boolean };
   summary: string;
 };
 export function prepareFleet(s: State, o: {
-  from: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo?: Partial<Res>; speedPercent?: number;
+  from: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo?: Partial<Res>; speedPercent?: number; rallier?: boolean;
 }): FleetPlan {
   const p = planetByName(s, o.from);
   if (!p) throw new Error(`Planète inconnue : ${o.from}`);
@@ -102,13 +102,13 @@ export function prepareFleet(s: State, o: {
   const total = cargo.metal + cargo.crystal + cargo.deuterium;
   if (total > cap) throw new Error(`Soute insuffisante : ${total} > ${cap}`);
   (Object.keys(cargo) as (keyof Res)[]).forEach((k) => { if (cargo[k] > Math.floor(p.resources[k])) throw new Error(`Pas assez de ${k} sur ${p.name} (${Math.floor(p.resources[k])})`); });
-  const payload = { planetId: p.id, mission: o.mission, coords: xy(o.coords), ships, cargo, speedPercent: o.speedPercent ?? 100 };
+  const payload = { planetId: p.id, mission: o.mission, coords: xy(o.coords), ships, cargo, speedPercent: o.speedPercent ?? 100, ...(o.rallier ? { rallier: true } : {}) };
   const dest = s.planets.find((x) => same(x.coords, payload.coords));
   const summary = [
     `${o.mission} depuis ${p.name} (${fmt(p.coords)}) → ${fmt(payload.coords)}${dest ? ` (${dest.name})` : ""}`,
     `Vaisseaux : ${shipsStr(ships)}`,
     total ? `Cargo : ${resStr(cargo)} / soute ${cap}` : `Cargo : vide (soute ${cap})`,
-    `Vitesse ${payload.speedPercent} % · slots ${s.fleetSlots.used}/${s.fleetSlots.total}`,
+    `Vitesse ${payload.speedPercent} %${payload.rallier ? " · attendre l'allié ✔" : ""} · slots ${s.fleetSlots.used}/${s.fleetSlots.total}`,
   ].join("\n");
   return { payload, summary };
 }
@@ -121,9 +121,9 @@ export async function sendFleet(plan: FleetPlan) {
 
 // ---------- 1. Presets d'attaque ----------
 export function planAttack(s: State, preset: string, pos: string, speedPercent = 100): FleetPlan {
-  const ships = PRESETS[preset];
-  if (!ships) throw new Error(`Preset inconnu : ${preset} (dispo : ${Object.keys(PRESETS).join(", ")})`);
-  return prepareFleet(s, { from: PERE, mission: "attack", coords: parseCoords(pos), ships, speedPercent });
+  const pr = PRESETS[preset.toLowerCase().replace(/\s+/g, " ").trim()];
+  if (!pr) throw new Error(`Preset inconnu : ${preset} (dispo : ${Object.keys(PRESETS).join(", ")})`);
+  return prepareFleet(s, { from: PERE, mission: "attack", coords: parseCoords(pos), ships: pr.ships, speedPercent, rallier: pr.rallier });
 }
 export async function attack(preset: string, pos: string, speedPercent = 100) {
   const plan = planAttack(await getState(), preset, pos, speedPercent);
@@ -136,10 +136,11 @@ export function parseCoords(pos: string): Coords {
 }
 
 // ---------- 2. Menaces ----------
-export type Threat = { id: string; mission?: string; arrivesAt: number; target: Coords; raw: any };
+export type Threat = { id: string; mission?: string; arrivesAt: number; target: Coords; attaquant?: string; cibleNom?: string; raw: any };
 let lastIncomingSample = "";
 
-/** ⚠️ FORMAT INCONNU : meilleur effort d'après la forme de `fleets[]`. À corriger avec le 1er échantillon (incoming-samples.jsonl). */
+/** Format lu dans le bundle client le 21/09/2026 [BUNDLE], jamais vu en live : `menaces[]` = { fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }.
+ *  `incoming[]` est aussi indexé par fleetId. Les anciens noms devinés restent en repli. Brut loggé dans incoming-samples.jsonl. */
 export function parseThreats(s: State): Threat[] {
   const raw = [...(s.incoming ?? []), ...(s.menaces ?? []), ...(s.alertesVives ?? [])];
   if (raw.length) {
@@ -154,16 +155,16 @@ export function parseThreats(s: State): Threat[] {
   const out = new Map<string, Threat>();
   for (const f of raw) {
     if (!f || typeof f !== "object") continue;
-    const id = String(f.id ?? f.fleetId ?? f.uid ?? "");
-    const arrivesAt = Number(f.arrivesAt ?? f.arrivalAt ?? f.arriveAt ?? f.arrival ?? f.impactAt ?? NaN);
-    const target = f.target?.coords ?? f.coords ?? f.target ?? f.destination?.coords ?? f.planet?.coords;
+    const id = String(f.fleetId ?? f.id ?? "");
+    const arrivesAt = Number(f.arrivesAt ?? f.impactAt ?? NaN);
+    const target = f.cible?.coords ?? f.target?.coords ?? f.coords;
     if (!id || !Number.isFinite(arrivesAt) || !target?.system) continue;
-    out.set(id, { id, mission: f.mission ?? f.type, arrivesAt, target: xy(target), raw: f });
+    out.set(id, { id, mission: f.mission, arrivesAt, target: xy(target), attaquant: f.attaquant, cibleNom: f.cible?.nom, raw: f });
   }
   return [...out.values()];
 }
-/** Une menace compte comme attaque si mission === "attack", ou si le champ mission est absent (format inconnu → prudence). [HYPOTHÈSE] */
-export const isAttack = (t: Threat) => t.mission === undefined || t.mission === "attack";
+/** Même logique que l'UI du jeu [BUNDLE] : dans `menaces`, tout ce qui n'est ni sondage ni destruction de lune est affiché « Attaque ». */
+export const isAttack = (t: Threat) => t.mission !== "espionage" && t.mission !== "destroyMoon";
 export const threatenedPlanetIds = (s: State, threats: Threat[]) =>
   new Set(threats.filter(isAttack).map((t) => s.planets.find((p) => same(p.coords, t.target))?.id).filter(Boolean) as string[]);
 
@@ -218,7 +219,8 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
     if (announced.has(t.id)) continue;
     announced.add(t.id);
     const p = s.planets.find((x) => same(x.coords, t.target));
-    alert(`MENACE ${t.mission ?? "?"} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s${isAttack(t) ? "" : " (ignorée : pas une attaque)"}`);
+    const label = t.mission === "espionage" ? "🔍 SONDAGE" : t.mission === "destroyMoon" ? "🌑 DESTRUCTION DE LUNE" : "🚨 ATTAQUE";
+    alert(`${label}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? t.cibleNom ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`);
   }
   const threatened = threatenedPlanetIds(s, threats);
   for (const p of s.planets) {
@@ -327,6 +329,13 @@ export function statusSummary(s: State): string {
   return lines.join("\n");
 }
 export const roundRes = (r: Res): Res => ({ metal: Math.floor(r.metal), crystal: Math.floor(r.crystal), deuterium: Math.floor(r.deuterium) });
+/** /flotte : vaisseaux à quai par planète (Père d'abord) + flottes en vol. */
+export function shipsSummary(s: State): string {
+  const order = [...s.planets].sort((a, b) => (a.id === PERE ? -1 : b.id === PERE ? 1 : 0));
+  const lines = order.map((p) => `• ${p.name} ${fmt(p.coords)}\n  ${shipsStr(Object.fromEntries(Object.entries(p.ships).filter(([k]) => !NEVER_FLY.has(k))))}`);
+  if (s.fleets.length) lines.push(`\nEn vol : ${s.fleets.length}`, ...s.fleets.map((f) => `  ↳ ${f.mission} ${shipsStr(f.ships ?? {})} → ${f.target?.coords ? fmt(f.target.coords) : "?"}`));
+  return lines.join("\n");
+}
 export function planetsSummary(s: State): string {
   return s.planets.map((p) => [
     `• ${p.name} (${p.id}) ${fmt(p.coords)}`,
@@ -345,7 +354,7 @@ export function threatsSummary(s: State): string {
   if (!ts.length) return "Aucune menace.";
   return ts.map((t) => {
     const p = s.planets.find((x) => same(x.coords, t.target));
-    return `• ${t.mission ?? "?"} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s${isAttack(t) ? "" : " (ignorée)"}`;
+    return `• ${t.mission ?? "attack"}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`;
   }).join("\n");
 }
 
@@ -361,6 +370,16 @@ function pollDelay(s: State, threats: Threat[]): number {
   return Math.max(MIN_SLEEP_MS, Math.min(normal, next));
 }
 const planetIdAt = (s: State, c: Coords) => s.planets.find((p) => same(p.coords, c))?.id;
+
+/** Erreurs remontées sur Telegram à la 1re occurrence, puis au plus une fois toutes les 15 min par message identique. */
+const errorSeen = new Map<string, number>();
+function notifyError(msg: string) {
+  const key = msg.replace(/\d+/g, "#").slice(0, 80);
+  const last = errorSeen.get(key) ?? 0;
+  if (Date.now() - last < 15 * 60_000) return;
+  errorSeen.set(key, Date.now());
+  alert(`❌ ERREUR bot : ${msg.slice(0, 600)}`);
+}
 
 // ---------- Boucle ----------
 export async function watch() {
@@ -378,6 +397,7 @@ export async function watch() {
     } catch (e: any) {
       health.errors++; health.lastError = e.message;
       log("ERR", e.message);
+      notifyError(e.message);
       await sleep(10_000);
     }
   }
@@ -387,7 +407,7 @@ export async function watch() {
 const isMain = /bot\.ts$/.test(process.argv[1] ?? "");
 if (isMain) {
   const [cmd, a, b] = process.argv.slice(2);
-  if (cmd === "attack") attack(a, b).then((r) => log(r)).catch((e) => { log(e.message); process.exit(1); });
+  if (cmd === "attack") attack(a, b).then((r) => log(r)).catch((e) => { log(e.message); process.exit(1); }); // ex. attack "p0 under" 12:9
   else if (cmd === "watch") watch();
   else if (cmd === "status") getState().then((s) => console.log(statusSummary(s))).catch((e) => { log(e.message); process.exit(1); });
   else console.log("Usage : attack <preset> <système:position> | watch | status");
