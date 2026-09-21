@@ -1,17 +1,41 @@
 {
-  "pl_2w": {
-    "enabled": false,
-    "keepEnergyPositive": true,
-    "skipUnaffordable": false,
-    "priorities": [
-      { "key": "metalMine", "max": 25 },
-      { "key": "crystalMine", "max": 22 },
-      { "key": "deuteriumSynthesizer", "max": 20 },
-      { "key": "solarPlant" }
-    ]
+  "defaults": {
+    "order": [
+      "robotFactory",
+      "shipyard",
+      "researchLab",
+      "solarPlant",
+      "fusionPlant",
+      "crystalMine",
+      "deuteriumSynthesizer",
+      "metalMine",
+      "missileSilo",
+      "metalStorage",
+      "crystalStorage",
+      "deuteriumStorage"
+    ],
+    "tiers": [
+      5,
+      7,
+      9,
+      10
+    ],
+    "continueAfterTiers": true,
+    "graceMs": 600000
   },
-  "pl_rn": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
-  "pl_402": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
-  "pl_4z8": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
-  "pl_7vb": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalStorage", "max": 8 }, { "key": "crystalStorage", "max": 7 }, { "key": "metalMine", "max": 20 }, { "key": "solarPlant" } ] }
+  "pl_2w": {
+    "enabled": false
+  },
+  "pl_rn": {
+    "enabled": false
+  },
+  "pl_402": {
+    "enabled": false
+  },
+  "pl_4z8": {
+    "enabled": false
+  },
+  "pl_7vb": {
+    "enabled": false
+  }
 }

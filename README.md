@@ -139,20 +139,23 @@ Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé 
 - `[OBSERVATION]` : ce que le bot ferait si les flags étaient armés. ❌ erreurs (1 fois, puis toutes les 15 min max). 💓 heartbeat, 🚨 poll bloqué.
 Les ids déjà notifiés sont dans `seen.json` (pas de doublon après un restart pm2).
 
-### 8. Auto-construction (`autobuild`)
-Fichier `build-plan.json` (rechargé à chaud dès qu'il change) :
-```json
-{ "pl_2w": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false,
-             "priorities": [ { "key": "metalMine", "max": 25 }, { "key": "crystalMine", "max": 22 }, { "key": "solarPlant" } ] } }
-```
-Règle par planète activée (et flag global `autobuild` on) : si `buildQueue` est vide, prendre la **première** priorité dont le niveau
-actuel est < `max` (absent = illimité), non verrouillée (`locked`/`missing`), dont le coût ≤ ressources, et qui ne fait pas passer
-`energy.balance` en négatif (`keepEnergyPositive`). Si la première éligible n'est pas finançable, on **attend** (pas de saut vers une
-priorité inférieure) sauf `skipUnaffordable: true`. Au plus une décision par planète par minute, un seul `POST /build` par tick.
+### 8. Auto-construction (`autobuild`) — par paliers
+Règles (utilisateur, 21/09/2026) :
+- **Ordre** : robotFactory > shipyard > researchLab > solarPlant > fusionPlant > crystalMine > deuteriumSynthesizer > metalMine > missileSilo > metalStorage > crystalStorage > deuteriumStorage.
+- **Paliers** 5 → 7 → 9 → 10 : on parcourt la liste et on monte chaque bâtiment au palier courant ; quand tout est au palier, on passe au suivant. Après 10 : niveau par niveau (11, 12, …) dans le même ordre (`continueAfterTiers`).
+- Pas les ressources, ou énergie qui passerait en négatif → **on passe au suivant de la liste** (dans le même palier). Rien d'éligible au palier courant → on attend (pas de saut de palier).
+- **Délai de 10 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
+- Activable **par planète** (`enabled`) + flag global `AUTOBUILD_ENABLED` / `/autobuild on|off`. Au plus une décision par planète par minute, un seul `POST /build` par tick.
 
-Bâtiments (clés de `buildOptions`, 21/09) : `metalMine`, `crystalMine`, `deuteriumSynthesizer`, `solarPlant`, `fusionPlant`,
-`metalStorage`, `crystalStorage`, `deuteriumStorage`, `robotFactory`, `shipyard`, `missileSilo`, `researchLab`.
-Telegram : `/plan` (priorités + prochain bâtiment par planète, coût, finançable ?), `/batiments <planète>`, `/autobuild on|off`, `/autobuild <planète> on|off`.
+`build-plan.json` (rechargé à chaud) :
+```json
+{
+  "defaults": { "order": ["robotFactory", "shipyard", "…"], "tiers": [5, 7, 9, 10], "continueAfterTiers": true, "graceMs": 600000 },
+  "pl_2w": { "enabled": false },
+  "pl_rn": { "enabled": true, "tiers": [5, 7] }
+}
+```
+Telegram : `/plan` (palier courant, prochain bâtiment, bâtiments sautés et pourquoi), `/batiments <planète>`, `/autobuild on|off`, `/autobuild <planète> on|off`.
 
 ### 9. Capture de données
 - `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **confirmer `parseThreats` au 1er échantillon**.
