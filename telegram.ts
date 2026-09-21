@@ -173,7 +173,7 @@ Auto-construction
 /autobuild on|off · /autobuild <planète> on|off
 
 /status · /threats · /recall <fleetId>
-/save on|off · /collect on|off · /supply on|off · /pause · /resume
+/save on|off · /collect on|off · /pause · /resume
 /token <refresh_token> — renouveler le token Keycloak (tous les 7 j max)
 
 /help full — toutes les commandes détaillées`;
@@ -194,7 +194,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /supply on|off · /collect on|off · /autobuild on|off [planète] · /pause · /resume
+/save on|off · /collect on|off · /autobuild on|off [planète] · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
