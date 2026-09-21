@@ -91,7 +91,9 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | `planets[].buildOptions / shipOptions / defenceOptions / researchOptions` | **Coûts et durées** du prochain niveau / par unité |
 | `fleets[]` | Flottes en vol : `id`, `mission`, `ships`, `phase`, `departsAt`, `arrivesAt`, `returnsAt`, `distance`, `fuel` |
 | `fleetSlots`, `expedition` | Slots libres, expéditions restantes |
-| `incoming`, `menaces`, `alertesVives` | **Attaques entrantes** — format inconnu (toujours vides à ce jour) |
+| `menaces[]` | **Flottes hostiles en approche** [BUNDLE, jamais vu en live] : `{ fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }`. L'UI affiche « Sondage » si `mission === "espionage"`, « Destruction de lune » si `destroyMoon`, sinon « Attaque » |
+| `incoming[]` | Même famille, indexé par `fleetId` (toasts) [BUNDLE] |
+| `alertesVives[]`, `assautsSubis[]` | Alertes indexées par `id` (format des éléments non lu) [BUNDLE] |
 | `spyReports`, `reports`, `arrivalReports`, `expeditionReports` | Rapports |
 
 ---
@@ -142,7 +144,16 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | `recuperation` | Épaves / signaux de détresse |
 | `destroyMoon` | Étoile de la mort |
 
-Paramètres inconnus : durée d'expédition, `rallier` (vu à `true` sur les attaques dans `/state`).
+**Champs optionnels du body** lus dans le bundle le 21/09/2026 [BUNDLE] (`...re&&p?{rallier:!0}:{}` etc.) :
+
+| Champ | Quand | Sens |
+|---|---|---|
+| `rallier: true` | attaque | case « Ralliement » / attendre l'allié (ACS) |
+| `heures: <n>` | expédition | durée en heures (plafonnée côté client) |
+| `holdHours: <n>` | balise (garde) | durée de garde en heures |
+| `coords.body: "moon"` | toute mission | viser la lune plutôt que la planète |
+
+Phases observées dans l'UI pour `fleets[]` : `outbound`, `returning`, `chargement`, `ralliement`, `garde` ; champs associés `rallieJusqua`, `gardeJusqua`, `chargeJusqua`, `exploringUntil`, `turnedAt`.
 
 | Endpoint | Body | Statut |
 |---|---|---|
@@ -188,7 +199,7 @@ Hors périmètre : `/api/dev/*` (admin : sanction, boost, suppression de joueur�
 1. ~~Échange du ticket (§1.3)~~ → les deux, testé le 21/09/2026.
 2. Header **ou** cookie suffit-il seul ?
 3. Réponse JSON de chaque POST
-4. Format de `incoming` / `menaces` pendant une attaque réelle
-5. Body d'une expédition (durée) et rôle de `rallier`
+4. Format de `menaces` : lu dans le bundle (fleetId, mission, attaquant, cible, arrivesAt) — à confirmer en live
+5. ~~Body d'une expédition et `rallier`~~ → `heures`, `rallier: true` lus dans le bundle le 21/09/2026
 6. 3e envoi à un écart de systèmes différent (valider la formule de distance)
 7. Effet de `speedPercent` < 100
