@@ -1,8 +1,8 @@
-// Auto-construction par PALIERS (règles utilisateur du 21/09) : quand la file d'une planète est vide depuis ≥ 10 min,
+// Auto-construction par PALIERS (règles utilisateur du 21/09) : quand la file d'une planète est vide depuis ≥ 2 min,
 // parcourir la liste ordonnée et monter chaque bâtiment au palier courant (5, puis 7, 9, 10, puis niveau par niveau) ;
 // pas les ressources ou énergie négative → on passe au suivant de la liste. Flag global `autobuild` + `enabled` par planète.
 // build-plan.json est rechargé dès qu'il change sur le disque (édition à la main sans redémarrer) :
-//   { "defaults": { "order": [...], "tiers": [5,7,9,10], "continueAfterTiers": true, "graceMs": 600000 },
+//   { "defaults": { "order": [...], "tiers": [5,7,9,10], "continueAfterTiers": true, "graceMs": 120000 },
 //     "pl_2w": { "enabled": false }, "pl_rn": { "enabled": true, "tiers": [5,7] }, ... }
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import type { Planet, State } from "./spacek-client.ts";
@@ -16,7 +16,7 @@ export type PlanetPlan = {
   order?: string[];            // ordre de parcours (défaut : defaults.order)
   tiers?: number[];            // paliers : on monte toute la liste au palier N avant de passer au suivant (défaut : defaults.tiers)
   continueAfterTiers?: boolean; // après le dernier palier : niveau par niveau (11, 12, …) dans le même ordre (défaut true)
-  graceMs?: number;            // délai après la fin d'un bâtiment avant de lancer en auto (défaut 10 min) — laisse la main à l'utilisateur
+  graceMs?: number;            // délai après la fin d'un bâtiment avant de lancer en auto (défaut 2 min) — laisse la main à l'utilisateur
 };
 export type BuildPlan = { defaults?: Partial<PlanetPlan> } & Record<string, PlanetPlan | Partial<PlanetPlan> | undefined>;
 
@@ -26,7 +26,7 @@ export const BUILDING_KEYS = [
   "deuteriumSynthesizer", "metalMine", "missileSilo", "metalStorage", "crystalStorage", "deuteriumStorage",
 ];
 const DEFAULT_TIERS = [5, 7, 9, 10];
-const DEFAULT_GRACE_MS = 10 * 60_000;
+const DEFAULT_GRACE_MS = 2 * 60_000;
 const MAX_LEVEL = 60; // borne du « niveau par niveau » après les paliers
 
 let plan: BuildPlan = {};
@@ -108,7 +108,7 @@ export async function autobuildTick(s: State) {
   for (const p of s.planets) {
     const pp = planetPlan(pl, p.id);
     if (!pp.enabled || p.buildQueue) continue;
-    if (s.now - (queueEmptySince.get(p.id) ?? s.now) < (pp.graceMs ?? DEFAULT_GRACE_MS)) continue; // laisse 10 min à l'utilisateur
+    if (s.now - (queueEmptySince.get(p.id) ?? s.now) < (pp.graceMs ?? DEFAULT_GRACE_MS)) continue; // laisse 2 min à l'utilisateur
     if (Date.now() - (lastDecision.get(p.id) ?? 0) < DECIDE_EVERY_MS) continue;
     lastDecision.set(p.id, Date.now());
     const { choice, skipped } = nextBuilding(p, pp);

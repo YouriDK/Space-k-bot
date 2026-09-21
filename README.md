@@ -146,13 +146,13 @@ Règles (utilisateur, 21/09/2026) :
 - **Ordre** : robotFactory > shipyard > researchLab > solarPlant > fusionPlant > crystalMine > deuteriumSynthesizer > metalMine > missileSilo > metalStorage > crystalStorage > deuteriumStorage.
 - **Paliers** 5 → 7 → 9 → 10 : on parcourt la liste et on monte chaque bâtiment au palier courant ; quand tout est au palier, on passe au suivant. Après 10 : niveau par niveau (11, 12, …) dans le même ordre (`continueAfterTiers`).
 - Pas les ressources, ou énergie qui passerait en négatif → **on passe au suivant de la liste** (dans le même palier). Rien d'éligible au palier courant → on attend (pas de saut de palier).
-- **Délai de 10 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
+- **Délai de 2 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
 - Activable **par planète** (`enabled`) + flag global `AUTOBUILD_ENABLED` / `/autobuild on|off`. Au plus une décision par planète par minute, un seul `POST /build` par tick.
 
 `build-plan.json` (rechargé à chaud) :
 ```json
 {
-  "defaults": { "order": ["robotFactory", "shipyard", "…"], "tiers": [5, 7, 9, 10], "continueAfterTiers": true, "graceMs": 600000 },
+  "defaults": { "order": ["robotFactory", "shipyard", "…"], "tiers": [5, 7, 9, 10], "continueAfterTiers": true, "graceMs": 120000 },
   "pl_2w": { "enabled": false },
   "pl_rn": { "enabled": true, "tiers": [5, 7] }
 }

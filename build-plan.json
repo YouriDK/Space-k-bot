@@ -21,7 +21,7 @@
       10
     ],
     "continueAfterTiers": true,
-    "graceMs": 600000
+    "graceMs": 120000
   },
   "pl_2w": {
     "enabled": false
