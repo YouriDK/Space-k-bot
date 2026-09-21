@@ -121,15 +121,17 @@ export class SpaceK {
     if (!tr.ok) throw new Error(`embed-ticket ${tr.status}: ${(await tr.text()).slice(0, 200)}`);
     const { url } = (await tr.json()) as { url: string };
 
-    // [DÉDUIT] mécanisme non vérifié : Location (#kaiya_session= ou ?kaiya_session=), Set-Cookie, ou corps HTML.
+    // [TESTÉ 21/09/2026] 302 avec Location: /#kaiya_session=<token> ET Set-Cookie: kaiya_app_session=<token>; Max-Age=43200 (12 h).
     const r = await fetch(url, { redirect: "manual" });
     const loc = r.headers.get("location") ?? "";
     const setCookie = r.headers.get("set-cookie") ?? "";
     const body = await r.text();
     if (!this.ticketLogged) {
       this.ticketLogged = true;
+      // Jetons masqués : les logs pm2 ne doivent pas contenir de session utilisable
+      const mask = (x: string) => x.replace(/(kaiya_session|kaiya_app_session|ticket)=[A-Za-z0-9._-]+/g, "$1=<masqué>");
       console.log(new Date().toISOString(), "[auth] échange ticket → status", r.status,
-        "headers", JSON.stringify(Object.fromEntries(r.headers)), "body", body.slice(0, 300).replace(/\s+/g, " "));
+        "headers", mask(JSON.stringify(Object.fromEntries(r.headers))), "body", mask(body.slice(0, 300).replace(/\s+/g, " ")));
     }
     const m = loc.match(/kaiya_session=([A-Za-z0-9._-]+)/)
       ?? setCookie.match(/kaiya_app_session=([A-Za-z0-9._-]+)/)

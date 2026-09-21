@@ -37,9 +37,13 @@ Authorization: Bearer <access_token>
 → 201 {"url": "https://space-k.apps.kaiya.kreactive.fr/__kaiya/session?ticket=<ticket>"}
 ```
 
-### 1.3 Ticket → kaiya_session [DÉDUIT]
-`GET <url du ticket>` → le navigateur atterrit sur `https://space-k.apps.kaiya.kreactive.fr/#kaiya_session=<token>`.
-Mécanisme exact (redirection `Location` ou `Set-Cookie`) **non vérifié** : lire les deux.
+### 1.3 Ticket → kaiya_session [TESTÉ 21/09/2026 depuis le Note 9]
+`GET <url du ticket>` (sans suivre la redirection) → **302** avec **les deux** :
+```
+Location: /#kaiya_session=<token>
+Set-Cookie: kaiya_app_session=<token>; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=43200
+```
+Même token dans les deux. `Max-Age=43200` = 12 h confirmées. Serveur Express (`x-powered-by`).
 
 ### 1.4 Appels jeu [TESTÉ]
 ```
@@ -181,7 +185,7 @@ Hors périmètre : `/api/dev/*` (admin : sanction, boost, suppression de joueur�
 
 ## 8. À capturer / vérifier
 
-1. Échange du ticket (§1.3) : `Location` ou `Set-Cookie` ?
+1. ~~Échange du ticket (§1.3)~~ → les deux, testé le 21/09/2026.
 2. Header **ou** cookie suffit-il seul ?
 3. Réponse JSON de chaque POST
 4. Format de `incoming` / `menaces` pendant une attaque réelle
