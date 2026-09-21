@@ -102,11 +102,11 @@ Raids (attendre l'allié ✔, cible vérifiée dans la galaxie)
 ${presetsHelp()}
 
 Scans (15 sondes sur chaque planète du joueur, en même temps)
-/scan_2003CP0 · /scan_987 · /scan_Thomas · /scan_aaa · /scan <nom>
+/scan_2003CP0 · /scan_987 · /scan_Thomas · /scan_aaa · /scan <nom> — 15 sondes/planète, part immédiatement
 
 Expéditions (position 16, depuis Père)
 /explo opti <h> — 10 éclaireurs + 100 GT
-/explo 911 [h] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources (garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut)
+/explo 911 [h=2] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources (garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut)
 
 Auto-construction
 /plan — priorités et prochain bâtiment par planète · /batiments <planète> — liste et coûts
@@ -145,10 +145,11 @@ async function handle(text: string, chatId: string) {
   const fleetAction = (plan: FleetPlan) => askConfirm(plan.summary, () => sendFleet(plan), chatId);
   const simple = (summary: string, run: () => Promise<any>) => askConfirm(summary, run, chatId);
   const planet = planetOrThrow;
+  // Scans : immédiats, sans confirmation (décision utilisateur) ; récap ✅ par planète une fois parti
   const scanPlayer = async (q: string, chat: string) => {
     send(`🔭 Recherche des planètes de ${q}…`, chat);
     const sc = await planScan(await getState(), q);
-    return askConfirm(sc.summary, () => runScan(sc), chat);
+    return send(`🔍 Scan de ${sc.player.name} lancé :\n${await runScan(sc)}`, chat);
   };
 
   switch (cmd) {

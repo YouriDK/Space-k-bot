@@ -112,8 +112,10 @@ export async function planScan(s: State, query: string): Promise<ScanPlan> {
 export async function runScan(sc: ScanPlan): Promise<string> {
   const out: string[] = [];
   for (const plan of sc.plans) {
-    try { await sendFleet(plan); out.push(`✅ ${fmt(plan.payload.coords)}`); }
-    catch (e: any) { out.push(`❌ ${fmt(plan.payload.coords)} : ${e.message.slice(0, 120)}`); }
+    const t = sc.player.planets.find((x) => fmt(x) === fmt(plan.payload.coords));
+    const line = `${fmt(plan.payload.coords)} ${t?.name ?? ""} — ${plan.payload.ships.espionageProbe} sondes`;
+    try { await sendFleet(plan); out.push(`✅ ${line}`); }
+    catch (e: any) { out.push(`❌ ${line} : ${e.message.slice(0, 120)}`); }
   }
   return out.join("\n");
 }

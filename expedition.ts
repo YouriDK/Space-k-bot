@@ -1,11 +1,12 @@
 // Expéditions depuis Père vers la position 16 de son système (state.expedition.position), durée `heures` [BUNDLE].
 //   /explo opti <h>  → 10 éclaireurs + 100 GT
-//   /explo 911 [h]   → tous les éclaireurs + GT + vaisseaux de bataille + croiseurs, toutes les ressources embarquables,
+//   /explo 911 [h]   → (2 h par défaut) tous les éclaireurs + GT + vaisseaux de bataille + croiseurs, toutes les ressources embarquables,
 //                      en gardant EXPLO_DEUT_KEEP (80 000) de deutérium sur Père pour être sûr de partir.
 import type { State } from "./spacek-client.ts";
 import { PERE, capacity, fillCargo, fmtNum, num, pere, prepareFleet, type FleetPlan } from "./core.ts";
 
 export const EXPLO_DEUT_KEEP = num("EXPLO_DEUT_KEEP", 80_000);
+export const EXPLO_911_HOURS = num("EXPLO_911_HOURS", 2);
 const SHIPS_911 = ["pathfinder", "largeCargo", "battleship", "cruiser"];
 
 function checkQuota(s: State) {
@@ -21,7 +22,7 @@ function checkQuota(s: State) {
 export function planExpedition(s: State, kind: "opti" | "911", hours?: number): FleetPlan {
   const { e, p } = checkQuota(s);
   if (kind === "opti" && hours == null) throw new Error("Usage : /explo opti <heures>");
-  const heures = Math.max(1, Math.min(hours ?? e.maxHours, e.maxHours));
+  const heures = Math.max(1, Math.min(hours ?? EXPLO_911_HOURS, e.maxHours)); // 911 sans durée : 2 h (décision utilisateur)
   const coords = { system: p.coords.system, position: e.position };
   let ships: Record<string, number>;
   let cargo = { metal: 0, crystal: 0, deuterium: 0 };

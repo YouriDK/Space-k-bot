@@ -129,7 +129,7 @@ si le compte diffère du classement, parcours complet. Raccourcis prévus : `/sc
 Cible : position `state.expedition.position` (16) du système de Père, mission `expedition`, `heures = min(h, maxHours)`.
 Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé (`saturatedSystems`).
 - `/explo opti <h>` : 10 éclaireurs + 100 GT.
-- `/explo 911 [h]` : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables
+- `/explo 911 [h]` (2 h par défaut) : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables
   (deut > cristal > métal) en gardant **≥ 80 000 deutérium** sur Père (`EXPLO_DEUT_KEEP`). `h` par défaut = `maxHours`.
 
 ### 7. Notifications
