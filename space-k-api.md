@@ -72,10 +72,12 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | Méthode | Endpoint | Statut | Contenu |
 |---|---|---|---|
 | GET | `/api/state` | [TESTÉ] | **Tout** : joueur, recherches, 5 planètes, flottes en vol, `incoming`, `menaces`, rapports, contrats, échanges, pactes |
-| GET | `/api/galaxy/carte` | [BUNDLE] | Carte de la galaxie |
-| GET | `/api/leaderboard` | [BUNDLE] | Classement |
+| GET | `/api/galaxy/carte` | [TESTÉ 21/09] | `{ systemes: [{ system, planetes, miennes, pirates, moissonneur, balise, depot, debris, cargaison }] }` — 40 systèmes, résumé seulement |
+| GET | `/api/galaxy?system=N` | [TESTÉ 21/09] | `{ system, slots: [{ position, astroRequis, colonisable, pirate, balise, convoi, recup, contrat, planet: { id, name, ownerId, ownerName, temperature, vacances, protection, expose, ecart, moon } \| null, debris: { metal, crystal } \| null }], occupancy, recup }` |
+| GET | `/api/leaderboard` | [TESTÉ 21/09] | `{ rows: [{ id, name, avatar, titre, combatPower, development, glory, total, planets }], meId }` |
 | GET | `/api/codex?planetId=<id>` | [BUNDLE] | Codex (prérequis) |
-| GET | `/api/profile/<nom>` | [BUNDLE] | Profil d'un joueur |
+| GET | `/api/profile/<playerId>` | [TESTÉ 21/09] | Par **id** (UUID du leaderboard), pas par nom (→ `{ error: "Joueur inconnu" }`). Renvoie `{ id, name, development, combatPower, planets (nombre), achievements, cadre, titre }` — pas les coordonnées |
+| GET | `/api/rapport/<id>` | [BUNDLE] | Détail d'un rapport |
 | GET | `/api/config` | [BUNDLE] | Config serveur |
 
 ### Champs utiles de `/api/state`
@@ -178,6 +180,10 @@ Phases observées dans l'UI pour `fleets[]` : `outbound`, `returning`, `chargeme
 | `POST /api/reports/dismiss` | `{ reportId }` | [BUNDLE] |
 | `POST /api/journalier` | coffre quotidien (body non lu) | [BUNDLE] |
 | `POST /api/element-dore` | `{}` | [BUNDLE] |
+
+Autres endpoints vus dans l'objet client du bundle (21/09/2026) [BUNDLE] : `/api/moon/build`, `/api/moon/build/cancel`, `/api/moon/build/demolish`, `/api/moon/rename`,
+`/api/pactes` (+ `/accepter`, `/refuser`, `/annuler`, `/rompre`), `/api/vacances` (+ `/fin`), `/api/profile/nickname|avatar|titre|theme`, `/api/voix`,
+`/api/trade/replies/clear`, `/api/journalier/bonus {clics}`, `/api/artefacts/reveler {cle}`, `/api/egg {key}`, `/api/conduit {ms}`, `/api/visite-faite`, `/api/moissonneur/vu {id}`, `/api/annonces/vues`.
 
 Hors périmètre : `/api/dev/*` (admin : sanction, boost, suppression de joueur…) — **ne jamais appeler**.
 

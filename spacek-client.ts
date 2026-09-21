@@ -47,6 +47,18 @@ export type Fleet = {
   target?: { coords?: Coords; [k: string]: any };
   [k: string]: any;
 };
+export type GalaxyPlanet = {
+  id: string; name: string; ownerId: string; ownerName: string; temperature: number;
+  vacances: boolean; protection: any; expose: boolean; ecart: any; moon: any;
+};
+export type GalaxySlot = {
+  position: number; astroRequis: number; colonisable: boolean; pirate: any; balise: any; convoi: any; recup: any; contrat: any;
+  planet: GalaxyPlanet | null; debris: { metal: number; crystal: number } | null;
+};
+export type GalaxySystem = { system: number; slots: GalaxySlot[]; occupancy: any; recup: any };
+export type LeaderboardRow = {
+  id: string; name: string; avatar?: string; titre?: string; combatPower: number; development: number; glory: number; total: number; planets: number;
+};
 export type State = {
   now: number;               // horloge serveur (ms) — toujours l'utiliser
   player: { research?: Record<string, number>; vitesses?: Record<string, number>; isProtected?: boolean; [k: string]: any };
@@ -196,10 +208,15 @@ export class SpaceK {
 
   // ---------- Lecture ----------
   state = () => this.call<State>("/state");                                    // [TESTÉ]
-  galaxy = () => this.call("/galaxy/carte");                                   // [BUNDLE]
-  leaderboard = () => this.call("/leaderboard");                               // [BUNDLE]
+  // [TESTÉ 21/09] { systemes: [{ system, planetes, miennes, pirates, moissonneur, balise, depot, debris, cargaison }] }
+  galaxy = () => this.call<{ systemes: { system: number; planetes: number; miennes: number; pirates: number; debris: boolean }[] }>("/galaxy/carte");
+  // [TESTÉ 21/09] { system, slots: [{ position, astroRequis, colonisable, pirate, balise, convoi, recup, contrat, planet, debris }], occupancy, recup }
+  galaxySystem = (system: number) => this.call<GalaxySystem>(`/galaxy?system=${system}`);
+  // [TESTÉ 21/09] { rows: [{ id, name, avatar, titre, combatPower, development, glory, total, planets }], meId }
+  leaderboard = () => this.call<{ rows: LeaderboardRow[]; meId: string }>("/leaderboard");
   codex = (planetId: string) => this.call(`/codex?planetId=${encodeURIComponent(planetId)}`); // [BUNDLE]
-  profile = (name: string) => this.call(`/profile/${encodeURIComponent(name)}`); // [BUNDLE]
+  // [TESTÉ 21/09] par **id joueur** (UUID du leaderboard), pas par nom → { id, name, development, combatPower, planets (nombre), achievements, titre… }
+  profile = (playerId: string) => this.call(`/profile/${encodeURIComponent(playerId)}`);
   config = () => this.call("/config");                                         // [BUNDLE]
 
   // ---------- Économie [BUNDLE] ----------

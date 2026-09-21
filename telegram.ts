@@ -6,7 +6,7 @@
 import {
   api, planAttack, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  PRESETS, CARGO, log, type FleetPlan, type Flags,
+  PRESETS, CARGO, log, findPlayer, playerSummary, type FleetPlan, type Flags,
 } from "./bot.ts";
 import { MISSIONS, planetByName, type Mission, type Res, type State } from "./spacek-client.ts";
 
@@ -92,6 +92,7 @@ const need = (toks: string[], n: number, usage: string) => { if (toks.length < n
 // Commandes courtes (les tiennes) — toujours depuis Père
 const HELP = `Mes commandes
 /flotte — mes vaisseaux (par planète + en vol)
+/joueur <nom> — ses planètes (coords), rang, puissance
 /p0 under 12:9 — attaque 6 croiseurs + 10 GT, attendre l'allié ✔
 /p0 over 12:9 — attaque 7 croiseurs + 10 GT, attendre l'allié ✔
 /status · /threats · /recall <fleetId>
@@ -129,6 +130,12 @@ async function handle(text: string, chatId: string) {
   switch (cmd) {
     case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : HELP, chatId);
     case "/flotte": case "/flottes": return send(await withState(shipsSummary), chatId);
+    case "/joueur": case "/player": {
+      need(args, 1, "/joueur <nom>");
+      const q = args.join(" ");
+      send(`🔭 Recherche de ${q}…`, chatId);
+      return send(playerSummary(await findPlayer(q), q), chatId);
+    }
     case "/p0": {
       // /p0 under 12:9 · /p0 over 12:9 — preset « p0 <variante> », toujours depuis Père, rallier ✔
       need(args, 2, "/p0 under|over <sys:pos>");

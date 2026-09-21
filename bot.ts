@@ -315,6 +315,47 @@ function sampleFleets(s: State) {
   if (seenFleets.size > 5_000) seenFleets.clear();
 }
 
+// ---------- Galaxie : planètes d'un joueur ----------
+// /galaxy?system=N par système occupé (carte → on saute les vides), cache 30 min, appels espacés : pas de rafale.
+const GALAXY_CACHE_MS = 30 * 60_000;
+const galaxyCache = new Map<number, { at: number; sys: import("./spacek-client.ts").GalaxySystem }>();
+async function galaxySystemCached(n: number) {
+  const c = galaxyCache.get(n);
+  if (c && Date.now() - c.at < GALAXY_CACHE_MS) return c.sys;
+  const sys = await api.galaxySystem(n);
+  galaxyCache.set(n, { at: Date.now(), sys });
+  await sleep(150);
+  return sys;
+}
+export type PlayerPlanet = { system: number; position: number; name: string; moon: boolean; vacances: boolean; protection: boolean; debris?: { metal: number; crystal: number } | null };
+/** Toutes les planètes d'un joueur (nom insensible à la casse) + sa ligne de classement si trouvée. */
+export async function findPlayer(query: string): Promise<{ row?: import("./spacek-client.ts").LeaderboardRow; rank?: number; planets: PlayerPlanet[] }> {
+  const q = query.toLowerCase().trim();
+  const { rows } = await api.leaderboard();
+  const idx = rows.findIndex((r) => r.name.toLowerCase() === q);
+  const row = idx >= 0 ? rows[idx] : rows.find((r) => r.name.toLowerCase().includes(q));
+  const name = (row?.name ?? query).toLowerCase();
+  const carte = await api.galaxy();
+  const planets: PlayerPlanet[] = [];
+  for (const sy of carte.systemes.filter((x) => x.planetes > 0)) {
+    const sys = await galaxySystemCached(sy.system);
+    for (const sl of sys.slots) {
+      if (sl.planet && sl.planet.ownerName.toLowerCase() === name)
+        planets.push({ system: sys.system, position: sl.position, name: sl.planet.name, moon: !!sl.planet.moon, vacances: sl.planet.vacances, protection: !!sl.planet.protection, debris: sl.debris });
+    }
+    if (row && planets.length >= row.planets) break; // toutes trouvées : on arrête de parcourir
+  }
+  return { row, rank: idx >= 0 ? idx + 1 : undefined, planets };
+}
+export function playerSummary(r: Awaited<ReturnType<typeof findPlayer>>, query: string): string {
+  const head = r.row
+    ? `${r.row.name}${r.rank ? ` — #${r.rank}` : ""} · ${r.row.planets} planète(s) · puissance ${r.row.combatPower.toLocaleString("fr-FR")} · dév. ${r.row.development}${r.row.titre ? ` · ${r.row.titre}` : ""}`
+    : `Joueur « ${query} » absent du classement`;
+  if (!r.planets.length) return `${head}\nAucune planète trouvée dans la galaxie.`;
+  return [head, ...r.planets.map((p) =>
+    `• ${p.system}:${p.position} ${p.name}${p.moon ? " 🌙" : ""}${p.vacances ? " (vacances)" : ""}${p.protection ? " 🛡 protégé" : ""}${p.debris ? ` · débris M ${p.debris.metal} C ${p.debris.crystal}` : ""}`)].join("\n");
+}
+
 // ---------- Résumés texte ----------
 export function statusSummary(s: State): string {
   const threats = parseThreats(s);
