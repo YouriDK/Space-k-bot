@@ -144,7 +144,12 @@ export function parseThreats(s: State): Threat[] {
   const raw = [...(s.incoming ?? []), ...(s.menaces ?? []), ...(s.alertesVives ?? [])];
   if (raw.length) {
     const sample = JSON.stringify({ incoming: s.incoming, menaces: s.menaces, alertesVives: s.alertesVives });
-    if (sample !== lastIncomingSample) { lastIncomingSample = sample; appendJsonl("incoming-samples.jsonl", { now: s.now, ...JSON.parse(sample) }); }
+    if (sample !== lastIncomingSample) {
+      lastIncomingSample = sample;
+      appendJsonl("incoming-samples.jsonl", { now: s.now, ...JSON.parse(sample) });
+      // Format inconnu → on notifie TOUJOURS le brut : au pire un JSON moche, jamais le silence
+      alert(`⚠️ ACTIVITÉ ENTRANTE (brut, ${raw.length} élément(s)) :\n${sample.slice(0, 1500)}`);
+    }
   }
   const out = new Map<string, Threat>();
   for (const f of raw) {
