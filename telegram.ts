@@ -4,11 +4,15 @@
 // répond à tout message avec le chat id et n'exécute rien.
 // Toute commande d'action passe par une confirmation ✅/❌ (sauf recall et flags, urgents).
 import {
-  api, planAttack, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
-  getFlags, setFlag, pause, resume, getHealth, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  PRESETS, CARGO, log, findPlayer, playerSummary, type FleetPlan, type Flags,
+  api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
+  getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
+  CARGO, log, planetOrThrow, type FleetPlan, type Flags,
 } from "./bot.ts";
-import { MISSIONS, planetByName, type Mission, type Res, type State } from "./spacek-client.ts";
+import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
+import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
+import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
+import { buildingsSummary, planSummary, setPlanetEnabled, BUILDING_KEYS } from "./autobuild.ts";
+import { MISSIONS, type Mission, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
 const CHAT_ID = (process.env.TG_CHAT_ID ?? "").trim();
@@ -85,27 +89,42 @@ const parseKv = (toks: string[]) => {
   if (m != null) cargo.metal = m; if (c != null) cargo.crystal = c; if (d != null) cargo.deuterium = d; // pas d'undefined qui écraserait le défaut 0
   return { cargo, speedPercent: kv.speed };
 };
-const coordsOf = (s: State, q: string) => { const p = planetByName(s, q); if (p) return p.coords; return parseCoords(q); };
+const coordsOf = (s: State, q: string) => { try { return planetOrThrow(s, q).coords; } catch { return parseCoords(q); } };
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
 // ---------- Commandes ----------
-// Commandes courtes (les tiennes) — toujours depuis Père
+// Commandes courtes (les tiennes) — attaques, scans et expéditions partent toujours de Père
 const HELP = `Mes commandes
 /flotte — mes vaisseaux (par planète + en vol)
 /joueur <nom> — ses planètes (coords), rang, puissance
-/p0 under 12:9 — attaque 6 croiseurs + 10 GT, attendre l'allié ✔
-/p0 over 12:9 — attaque 7 croiseurs + 10 GT, attendre l'allié ✔
+
+Raids (attendre l'allié ✔, cible vérifiée dans la galaxie)
+${presetsHelp()}
+
+Scans (15 sondes sur chaque planète du joueur, en même temps)
+/scan_2003CP0 · /scan_987 · /scan_Thomas · /scan_aaa · /scan <nom>
+
+Expéditions (position 16, depuis Père)
+/explo opti <h> — 10 éclaireurs + 100 GT
+/explo 911 [h] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources (garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut)
+
+Auto-construction
+/plan — priorités et prochain bâtiment par planète · /batiments <planète> — liste et coûts
+/autobuild on|off · /autobuild <planète> on|off
+
 /status · /threats · /recall <fleetId>
-/save on|off · /collect on|off · /pause · /resume
+/save on|off · /collect on|off · /supply on|off · /pause · /resume
 /token <refresh_token> — renouveler le token Keycloak (tous les 7 j max)
 
 /help full — toutes les commandes détaillées`;
 
 const HELP_FULL = `Lecture
-/status · /planets · /fleets · /threats · /presets · /flags
+/status · /planets · /fleets · /threats · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
 
 Actions (confirmation ✅/❌)
-/attack <preset> <sys:pos> [speed%]
+/p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>   (variantes : ${Object.keys(PRESETS.p1).join(", ")})
+/scan_<joueur> · /scan <joueur>
+/explo opti <h> · /explo 911 [h]
 /send <planète> <mission> <sys:pos|planète> <k=n,k=n> [m=… c=… d=… speed=…]
 /transport <de> <vers> <metal> <crystal> <deut>
 /deploy <de> <vers> <k=n,k=n>
@@ -114,10 +133,10 @@ Actions (confirmation ✅/❌)
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 
 Immédiat
-/recall <fleetId>
-/save on|off · /supply on|off · /collect on|off · /pause · /resume
+/recall <fleetId> · /token <refresh_token>
+/save on|off · /supply on|off · /collect on|off · /autobuild on|off [planète] · /pause · /resume
 
-<planète> = nom (Père), id (pl_2w) ou coords (6:4). Missions : ${MISSIONS.join(", ")}`;
+<planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
 async function handle(text: string, chatId: string) {
   const [cmdRaw, ...args] = text.trim().split(/\s+/);
@@ -125,7 +144,12 @@ async function handle(text: string, chatId: string) {
   const withState = async <T>(fn: (s: State) => T) => fn(await getState());
   const fleetAction = (plan: FleetPlan) => askConfirm(plan.summary, () => sendFleet(plan), chatId);
   const simple = (summary: string, run: () => Promise<any>) => askConfirm(summary, run, chatId);
-  const planet = (s: State, q: string) => { const p = planetByName(s, q); if (!p) throw new Error(`Planète inconnue : ${q}`); return p; };
+  const planet = planetOrThrow;
+  const scanPlayer = async (q: string, chat: string) => {
+    send(`🔭 Recherche des planètes de ${q}…`, chat);
+    const sc = await planScan(await getState(), q);
+    return askConfirm(sc.summary, () => runScan(sc), chat);
+  };
 
   switch (cmd) {
     case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : HELP, chatId);
@@ -136,16 +160,40 @@ async function handle(text: string, chatId: string) {
       send(`🔭 Recherche de ${q}…`, chatId);
       return send(playerSummary(await findPlayer(q), q), chatId);
     }
-    case "/p0": {
-      // /p0 under 12:9 · /p0 over 12:9 — preset « p0 <variante> », toujours depuis Père, rallier ✔
-      need(args, 2, "/p0 under|over <sys:pos>");
-      return fleetAction(await withState((s) => planAttack(s, `p0 ${args[0]}`, args[1])));
+    case "/p0": case "/p1": {
+      // /p0 under 12:9 · /p1 opti_over 12:9 — toujours depuis Père, rallier ✔, cible vérifiée dans la galaxie
+      need(args, 2, `${cmd} <${Object.keys(PRESETS[cmd.slice(1)]).join("|")}> <sys:pos>`);
+      const s = await getState();
+      return fleetAction(await planPreset(s, cmd.slice(1), args[0], args[1]));
+    }
+    case "/scan": {
+      need(args, 1, "/scan <joueur>");
+      return scanPlayer(args.join(" "), chatId);
+    }
+    case "/explo": {
+      need(args, 1, "/explo opti <h> | /explo 911 [h]");
+      const kind = args[0].toLowerCase();
+      if (kind !== "opti" && kind !== "911") throw new Error("Usage : /explo opti <h> | /explo 911 [h]");
+      const h = args[1] != null ? Number(args[1]) : undefined;
+      if (args[1] != null && !Number.isFinite(h)) throw new Error(`Durée invalide : ${args[1]}`);
+      return fleetAction(await withState((s) => planExpedition(s, kind, h)));
+    }
+    case "/plan": return send(await withState(planSummary), chatId);
+    case "/batiments": case "/buildings": { need(args, 1, "/batiments <planète>"); return send(await withState((s) => buildingsSummary(planet(s, args[0]))), chatId); }
+    case "/autobuild": {
+      need(args, 1, "/autobuild on|off | /autobuild <planète> on|off");
+      if (args.length === 1) { const f = setFlag("autobuild", /^(on|1|true)$/i.test(args[0])); return send(flagsStr(f), chatId); }
+      const v = /^(on|1|true)$/i.test(args[1]);
+      const s = await getState();
+      const p = planet(s, args[0]);
+      const pp = setPlanetEnabled(p.id, v, s);
+      return send(`Auto-construction ${p.name} : ${pp.enabled ? "on" : "off"}${!getFlags().autobuild ? " (flag global OFF → /autobuild on)" : ""}\n${planSummary(s)}`, chatId);
     }
     case "/status": return send(await withState(statusSummary), chatId);
     case "/planets": return send(await withState(planetsSummary), chatId);
     case "/fleets": return send(await withState(fleetsSummary), chatId);
     case "/threats": return send(await withState(threatsSummary), chatId);
-    case "/presets": return send(Object.entries(PRESETS).map(([k, v]) => `• /${k} <sys:pos> : ${Object.entries(v.ships).map(([s, n]) => `${n} ${s}`).join(", ")}${v.rallier ? " · attendre l'allié ✔" : ""}`).join("\n"), chatId);
+    case "/presets": return send(presetsHelp(), chatId);
     case "/flags": return send(flagsStr(getFlags()), chatId);
 
     case "/save": case "/supply": case "/collect": {
@@ -165,10 +213,6 @@ async function handle(text: string, chatId: string) {
     }
     case "/recall": { need(args, 1, "/recall <fleetId>"); return send(`RECALL ${args[0]} → ${short(await api.recall(args[0]))}`, chatId); }
 
-    case "/attack": {
-      need(args, 2, "/attack <preset> <sys:pos> [speed%]");
-      return fleetAction(await withState((s) => planAttack(s, args[0], args[1], args[2] ? +args[2] : 100)));
-    }
     case "/send": {
       need(args, 4, "/send <planète> <mission> <sys:pos> <k=n,k=n> [m= c= d= speed=]");
       const [from, mission, to, ships, ...rest] = args;
@@ -214,10 +258,11 @@ async function handle(text: string, chatId: string) {
       if (what === "research") return simple(`annuler la recherche en cours`, () => api.cancelResearch());
       throw new Error("Usage : /cancel build|ships|research <planète>");
     }
-    default: return send(`Commande inconnue : ${cmd}\n/help pour la liste`, chatId);
+    default:
+      if (cmd.startsWith("/scan_")) return scanPlayer(cmdRaw.replace(/@.*$/, "").slice(6), chatId); // /scan_2003CP0 (casse d'origine)
+      return send(`Commande inconnue : ${cmd}\n/help pour la liste`, chatId);
   }
 }
-const flagsStr = (f: Flags) => `save ${f.save ? "ARMÉ 🔴" : "observation"} · supply ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"}`;
 
 // ---------- Boucle getUpdates ----------
 async function poll() {

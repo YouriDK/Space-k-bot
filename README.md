@@ -20,14 +20,16 @@ Ce README est la **source de vérité** du projet (récap + décisions). La réf
 | Fichier | Rôle |
 |---|---|
 | `spacek-client.ts` | Client : auth auto (refresh Keycloak + rotation atomique, ticket, session, retry 401) + un wrapper par endpoint |
-| `bot.ts` | Cœur : presets d'attaque, fleet-save par planète, supply, collect, capture de données, flags. CLI `attack` / `watch` / `status` |
+| `bot.ts` + modules | Cœur (boucle, fleet-save, supply, collect) + `core.ts`, `threats.ts`, `presets.ts`, `scan.ts`, `expedition.ts`, `notify.ts`, `autobuild.ts` — voir « Modules ». CLI `watch` / `status` |
 | `telegram.ts` | Point d'entrée serveur : `watch()` + commandes Telegram (lecture et actions avec confirmation) + notifications + heartbeat |
 | `setup-termux.sh` | Installation sur le Note 9 (Termux, pm2, Termux:Boot) |
 | `space-k-api.md` | Référence API (auth, endpoints, bodies, champs de `/state`, formules) |
-| `.env.example` | Variables : `TG_TOKEN`, `TG_CHAT_ID`, flags, `HEARTBEAT_H`, `REFRESH_FILE` |
+| `.env.example` | Variables : `TG_TOKEN`, `TG_CHAT_ID`, flags, `HEARTBEAT_H`, `REFRESH_FILE`, `POLL_MS`, `SAVE_BEFORE_MS`, `SCAN_PROBES`, `EXPLO_DEUT_KEEP` |
+| `build-plan.json` | Priorités d'auto-construction par planète (éditable à chaud) |
+| `galaxy-snapshot.json` | Relevé complet de la galaxie du 21/09 (joueurs, planètes, débris) — cache initial des scans |
 
 Fichiers de données produits par le bot (ignorés par git) : `incoming-samples.jsonl` (menaces brutes),
-`fleet-samples.jsonl` (ships/distance/fuel pour les formules), `post-samples.jsonl` (réponses des POST).
+`fleet-samples.jsonl` (ships/distance/fuel pour les formules), `post-samples.jsonl` (réponses des POST), `seen.json` (ids notifiés).
 
 ## Auth (chaîne complète)
 
@@ -60,18 +62,32 @@ refresh_token Keycloak (168 h d'inactivité, localStorage kaiya.kreactive.fr, cl
 
 ## Fonctionnalités
 
-Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `SUPPLY_ENABLED`, `COLLECT_ENABLED` sont à `false`.
-Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun `POST /fleet` automatique.
-Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect on`, `/pause`, `/resume`).
+Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `SUPPLY_ENABLED`, `COLLECT_ENABLED`, `AUTOBUILD_ENABLED` sont à `false`.
+Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
+Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect on`, `/autobuild on`, `/pause`, `/resume`).
 
-### 1. Fleet-save (par planète, multi-vagues)
+### Modules
+| Fichier | Rôle |
+|---|---|
+| `core.ts` | Client, flags, log/notification, santé, `prepareFleet`/`sendFleet`, helpers |
+| `threats.ts` | Parsing de `menaces`/`incoming`/`alertesVives` (format du bundle) |
+| `bot.ts` | Boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés |
+| `presets.ts` | Raids `/p0` `/p1` (validation de la cible dans la galaxie) |
+| `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min, relevé `galaxy-snapshot.json`), scans `/scan_<joueur>` |
+| `expedition.ts` | `/explo opti` et `/explo 911` |
+| `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
+| `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
+
+### 1. Fleet-save (par planète, multi-vagues) — sondes ET attaques
 - Poll `/state` toutes les 10 s (± 20 % de jitter, réglable `POLL_MS`). **Jamais de poll rapide** (soupçons) : quand une échéance approche (décollage à `arrivesAt − SAVE_BEFORE_MS`, rappel à `recallAt`), la boucle dort jusqu'à l'échéance exacte puis fait un seul appel. Tous les timings utilisent `now` (horloge serveur).
-- Menaces filtrées sur **`mission === "attack"`** (un transport allié du pacte ne déclenche rien ; `espionage` → notification seulement).
-  Si le champ `mission` est absent du format réel, la menace est traitée comme une attaque par prudence. [HYPOTHÈSE]
-- **Groupement par planète cible** : `saveAt = min(arrivesAt) − 5 s`, `recallAt = max(arrivesAt) + 1,5 s`.
-  Décollage à `saveAt` si la menace existe encore (attaquant qui rappelle avant → on ne bouge pas ; menace vue à moins de 5 s → on décolle quand même).
+- Format des menaces lu dans le bundle [BUNDLE, jamais vu en live] : `menaces[] = { fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }`.
+  Le brut est loggé (`incoming-samples.jsonl`) **et notifié** dès qu'il change.
+- **Déclencheurs du save** (décision du 21/09) : `espionage` **et** toute attaque (tout sauf `destroyMoon`). Décollage **10 s** avant l'impact (`SAVE_BEFORE_MS = 10000`).
+  Les sondes du même système arrivent en ~130 ms : impossible à contrer, le save vise surtout les sondes lointaines et les attaques.
+- **Groupement par planète cible** : `saveAt = min(arrivesAt) − 10 s`, `recallAt = max(arrivesAt) + 1,5 s`.
+  Décollage à `saveAt` si la menace existe encore (attaquant qui rappelle avant → on ne bouge pas ; menace vue à moins de 10 s → on décolle quand même).
   Une nouvelle vague pendant le save **repousse le rappel** au lieu de relancer un save.
-- Décollage : tous les vaisseaux (sauf satellites) en `deploy` vers la planète la plus proche **non menacée** si possible,
+- Décollage : tous les vaisseaux (sauf satellites) en `deploy` vers la planète la plus proche **non attaquée** si possible,
   sinon la plus proche quand même (être en vol suffit). Cargo rempli deut > cristal > métal en gardant `DEUT_RESERVE`.
 - Rappel à `recallAt`. Si le rappel échoue ou la flotte s'est déjà posée, elle reste à l'abri sur la destination → `/deploy` pour la ramener.
 - Pas de slot libre → pas de décollage, alerte claire. Pas de slot réservé (décision : on en a assez).
@@ -86,11 +102,60 @@ BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si u
 de la capacité, le surplus au-dessus de `COLLECT_KEEP` (50 %) part vers Père avec les transporteurs sur place (GT puis PT).
 Jamais depuis/vers une planète menacée, pas de doublon.
 
-### 4. Presets d'attaque depuis Père
-`p0` = 7 croiseurs + 10 GT · `p0-sec` = 7 croiseurs · `p1` = composition à fournir. Vérifie vaisseaux dispo + slot libre.
+### 4. Raids (`/p0`, `/p1`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
+| Commande | Composition |
+|---|---|
+| `/p0 under <sys:pos>` | 7 croiseurs + 10 GT |
+| `/p0 over <sys:pos>` | 9 croiseurs + 10 GT |
+| `/p0 opti_under <sys:pos>` | 11 éclaireurs |
+| `/p0 opti_over <sys:pos>` | 13 éclaireurs + 10 GT |
+| `/p1 under <sys:pos>` | 60 croiseurs + 30 GT |
+| `/p1 over <sys:pos>` | 70 croiseurs + 30 GT |
+| `/p1 trio <sys:pos>` | 50 croiseurs + 30 GT |
+| `/p1 opti_under <sys:pos>` | 20 croiseurs + 32 éclaireurs |
+| `/p1 opti_over <sys:pos>` | 10 croiseurs + 32 éclaireurs |
+| `/p1 opti_trio <sys:pos>` | 5 croiseurs + 32 éclaireurs (la 2e ligne « trio » de la spec) |
 
-### 5. Capture de données
-- `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **corriger `parseThreats` au 1er échantillon**.
+Avant la confirmation, la cible est vérifiée par `GET /galaxy?system=N` : position 1–15, planète présente, pas à nous ;
+sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de la planète et son propriétaire.
+
+### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
+15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps après une seule confirmation.
+Pas assez de sondes → `floor(dispo / nb planètes)` par planète. Pas assez de slots → seules les N premières planètes.
+Les planètes du joueur viennent du relevé `galaxy-snapshot.json` (systèmes à vérifier) puis de `/galaxy?system=N` (cache 30 min) ;
+si le compte diffère du classement, parcours complet. Raccourcis prévus : `/scan_2003CP0`, `/scan_987`, `/scan_Thomas`, `/scan_aaa` (tout nom marche).
+
+### 6. Expéditions (`/explo`)
+Cible : position `state.expedition.position` (16) du système de Père, mission `expedition`, `heures = min(h, maxHours)`.
+Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé (`saturatedSystems`).
+- `/explo opti <h>` : 10 éclaireurs + 100 GT.
+- `/explo 911 [h]` : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables
+  (deut > cristal > métal) en gardant **≥ 80 000 deutérium** sur Père (`EXPLO_DEUT_KEEP`). `h` par défaut = `maxHours`.
+
+### 7. Notifications
+- 🚨/🔍 menace en approche (attaque / sondage), 💥 impact.
+- 🏗 bâtiment terminé (planète + nom), 🔬 recherche terminée, 🚀 lot de chantier terminé.
+- 🔍 sondage subi (nouveau `spyReports[]` avec `role: "defender"`), 📜 rapport d'un genre encore inconnu (brut).
+- `[OBSERVATION]` : ce que le bot ferait si les flags étaient armés. ❌ erreurs (1 fois, puis toutes les 15 min max). 💓 heartbeat, 🚨 poll bloqué.
+Les ids déjà notifiés sont dans `seen.json` (pas de doublon après un restart pm2).
+
+### 8. Auto-construction (`autobuild`)
+Fichier `build-plan.json` (rechargé à chaud dès qu'il change) :
+```json
+{ "pl_2w": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false,
+             "priorities": [ { "key": "metalMine", "max": 25 }, { "key": "crystalMine", "max": 22 }, { "key": "solarPlant" } ] } }
+```
+Règle par planète activée (et flag global `autobuild` on) : si `buildQueue` est vide, prendre la **première** priorité dont le niveau
+actuel est < `max` (absent = illimité), non verrouillée (`locked`/`missing`), dont le coût ≤ ressources, et qui ne fait pas passer
+`energy.balance` en négatif (`keepEnergyPositive`). Si la première éligible n'est pas finançable, on **attend** (pas de saut vers une
+priorité inférieure) sauf `skipUnaffordable: true`. Au plus une décision par planète par minute, un seul `POST /build` par tick.
+
+Bâtiments (clés de `buildOptions`, 21/09) : `metalMine`, `crystalMine`, `deuteriumSynthesizer`, `solarPlant`, `fusionPlant`,
+`metalStorage`, `crystalStorage`, `deuteriumStorage`, `robotFactory`, `shipyard`, `missileSilo`, `researchLab`.
+Telegram : `/plan` (priorités + prochain bâtiment par planète, coût, finançable ?), `/batiments <planète>`, `/autobuild on|off`, `/autobuild <planète> on|off`.
+
+### 9. Capture de données
+- `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **confirmer `parseThreats` au 1er échantillon**.
 - `fleet-samples.jsonl` : chaque flotte vue (`ships`, `distance`, `fuel`, timings) → ajuster la formule de carburant et de distance.
 - `post-samples.jsonl` : réponse de chaque POST (inconnues à ce jour).
 - Latence de `GET /state` (moyenne glissante) dans `/status` et le heartbeat.
@@ -99,11 +164,14 @@ Jamais depuis/vers une planète menacée, pas de doublon.
 
 Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vide → le bot répond « ton chat id est X » et n'exécute rien.
 
-**Lecture** : `/status` · `/planets` · `/fleets` · `/threats` · `/presets` · `/flags` · `/help`
+**Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
+`/autobuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
-**Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s) :
+**Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; une confirmation par lot pour les scans) — `/help full` :
 ```
-/attack <preset> <sys:pos> [speed%]
+/p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>
+/scan_<joueur> · /scan <joueur>
+/explo opti <h> · /explo 911 [h]
 /send <planète> <mission> <sys:pos|planète> <k=n,k=n> [m=… c=… d=… speed=…]
 /transport <de> <vers> <metal> <crystal> <deut>        (GT puis PT calculés)
 /deploy <de> <vers> <k=n,k=n>
@@ -111,9 +179,9 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/save on|off` · `/supply on|off` · `/collect on|off` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/supply on|off` · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
 
-`<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`). Notifications push : menace, save, recall, supply, collect, erreurs.
+`<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.
 
 ## Soutes et formules

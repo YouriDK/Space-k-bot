@@ -1,0 +1,17 @@
+{
+  "pl_2w": {
+    "enabled": false,
+    "keepEnergyPositive": true,
+    "skipUnaffordable": false,
+    "priorities": [
+      { "key": "metalMine", "max": 25 },
+      { "key": "crystalMine", "max": 22 },
+      { "key": "deuteriumSynthesizer", "max": 20 },
+      { "key": "solarPlant" }
+    ]
+  },
+  "pl_rn": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
+  "pl_402": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
+  "pl_4z8": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalMine", "max": 20 }, { "key": "crystalMine", "max": 18 }, { "key": "solarPlant" } ] },
+  "pl_7vb": { "enabled": false, "keepEnergyPositive": true, "skipUnaffordable": false, "priorities": [ { "key": "metalStorage", "max": 8 }, { "key": "crystalStorage", "max": 7 }, { "key": "metalMine", "max": 20 }, { "key": "solarPlant" } ] }
+}

@@ -89,14 +89,30 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | `player.isProtected`, `protectedUntil` | Protection débutant |
 | `planets[].id / coords / resources / capacities / production / energy` | Économie par planète |
 | `planets[].ships / defences / silo` | Forces à quai |
-| `planets[].buildQueue / shipQueue / shipQueueSuite` | Files en cours (`null` = libre) |
-| `planets[].buildOptions / shipOptions / defenceOptions / researchOptions` | **Coûts et durées** du prochain niveau / par unité |
+| `planets[].buildings` | `{ key: level }` — niveaux actuels des bâtiments [TESTÉ 21/09] |
+| `planets[].energy` | `{ solar, fusion, satellite, produced, consumed, balance, fusionDeuterium, factor }` [TESTÉ 21/09] |
+| `planets[].efficiency` | `{ metalMine, crystalMine, deuteriumSynthesizer, solarPlant, fusionPlant }` en % [TESTÉ 21/09] |
+| `planets[].size / usedFields / temperature` | Champs de la planète [TESTÉ 21/09] |
+| `planets[].buildQueue` | `{ key, targetLevel, cost, startedAt, finishesAt } \| null` [TESTÉ 21/09] |
+| `planets[].shipQueue` | `{ kind: "ship"\|…, key, total, remaining, unitCost, unitMs, startedAt, nextAt, name } \| null` ; `shipQueueSuite[]` = lots suivants `{ kind, key, name, total, remaining, unitMs, rang }` ; `shipQueueFin` (ms) ; `shipyardBusy`, `labBusy` [TESTÉ 21/09] |
+| `player.researchQueue` | `{ key, targetLevel, cost, planetId, startedAt, finishesAt } \| null` [TESTÉ 21/09] |
+| `planets[].buildOptions[]` | `{ key, name, level (actuel), cost { metal, crystal, deuterium }, energyCost, durationMs, description, bonus, ouvre, locked, missing[], demolition }` — 12 clés : metalMine, crystalMine, deuteriumSynthesizer, solarPlant, fusionPlant, metalStorage, crystalStorage, deuteriumStorage, robotFactory, shipyard, missileSilo, researchLab [TESTÉ 21/09] |
+| `planets[].shipOptions / defenceOptions` | Coûts et durées par unité |
+| `researchOptions[]` (racine et par planète) | `{ key, name, level, cost, durationMs, description, ouvre, locked, missing[] }` [TESTÉ 21/09] |
+| `planets[].nextBuildingUnlock / nextShipUnlock / nextDefenceUnlock` | Prochain déblocage `{ key, name, missing[], step { kind, key, name, level, where } }` [TESTÉ 21/09] |
 | `fleets[]` | Flottes en vol : `id`, `mission`, `ships`, `phase`, `departsAt`, `arrivesAt`, `returnsAt`, `distance`, `fuel` |
-| `fleetSlots`, `expedition` | Slots libres, expéditions restantes |
+| `fleetSlots` | `{ used, total }` [TESTÉ 21/09] |
+| `expedition` | `{ level, unlocked, unlock, slots, inFlight, maxHours, position (16), maxPerSystemPer24h, maxPerPlayerPer24h, lanceesAujourdhui, heureDeReset, saturatedSystems[] }` [TESTÉ 21/09] |
+| `joueurs[]` | `{ id, nom, libre }` — tous les joueurs (pour les pactes/échanges) [TESTÉ 21/09] |
+| `carteGalaxie` | `true` (indicateur, pas la carte) [TESTÉ 21/09] |
 | `menaces[]` | **Flottes hostiles en approche** [BUNDLE, jamais vu en live] : `{ fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }`. L'UI affiche « Sondage » si `mission === "espionage"`, « Destruction de lune » si `destroyMoon`, sinon « Attaque » |
 | `incoming[]` | Même famille, indexé par `fleetId` (toasts) [BUNDLE] |
 | `alertesVives[]`, `assautsSubis[]` | Alertes indexées par `id` (format des éléments non lu) [BUNDLE] |
-| `spyReports`, `reports`, `arrivalReports`, `expeditionReports` | Rapports |
+| `spyReports[]` | `{ id, kind: "espionage", at, coords { galaxy, system, position }, attackerId, attackerName, defenderId, defenderName, planetName, probes, revenues, gap, levels, info, debris, counterEspionageRisk, probesLost, luPar[], role: "attacker"\|"defender", lu }` [TESTÉ 21/09] |
+| `reports[]` | Rapports de combat. Vus : `kind: "pirate"` `{ id, at, coords, attackerId, ownerId, tier, rounds[], attackerLosses, attackerSurvivors, garnisonDetruite, garnisonRestante, degatsCeRaid, degatsCumules, classement, butin, repaireDetruit, rallies, luPar, role, lu }` et `kind: "pirateTresor"`. **Pas de champ `defenderId`** — un combat subi n'a pas encore été observé [TESTÉ 21/09] |
+| `arrivalReports[]` | `{ id, kind: "arrivee", mission, at, coords, body, ownerId, corps, ships, cargo, missionAller, raison, depuisBalise, role, lu }` [TESTÉ 21/09] |
+| `expeditionReports[]` | `{ id, kind: "expedition", at, coords, ownerId, issue (ex. smallFind), texte, etape, surTotal, heures, gain { metal, crystal, deuterium } }` [TESTÉ 21/09] |
+| `unreadReports` | nombre [TESTÉ 21/09] |
 
 ---
 

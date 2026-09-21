@@ -1,22 +1,22 @@
-// Bot Space-K — cœur métier, importé par telegram.ts ou utilisable en CLI :
-//   npx tsx --env-file=.env bot.ts attack p0 25:11   → envoie un preset depuis Père
-//   npx tsx --env-file=.env bot.ts watch             → fleet-save + supply + collect (selon flags)
-//   npx tsx --env-file=.env bot.ts status            → résumé texte
+// Bot Space-K — cœur : boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés.
+//   npx tsx --env-file=.env bot.ts watch     → boucle complète (selon flags)
+//   npx tsx --env-file=.env bot.ts status    → résumé texte
+// Modules : core.ts (client, flags, helpers) · threats.ts · presets.ts · scan.ts · expedition.ts · notify.ts · autobuild.ts
 //
-// Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / SUPPLY_ENABLED / COLLECT_ENABLED = false) :
-// le bot calcule, logue et notifie ce qu'il ferait, mais n'émet aucun POST /fleet automatique.
-import { appendFileSync } from "node:fs";
-import { SpaceK, type Coords, type Fleet, type Mission, type Planet, type Res, type State, planetByName } from "./spacek-client.ts";
-
-export const PERE = "pl_2w";
+// Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / SUPPLY_ENABLED / COLLECT_ENABLED / AUTOBUILD_ENABLED = false) :
+// le bot calcule, logue et notifie ce qu'il ferait, mais n'émet aucun POST automatique.
+import type { Coords, Fleet, Planet, Res, State } from "./spacek-client.ts";
+import {
+  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, fillCargo, flags, fmt, getFlags, getHealth, getState,
+  log, num, recordError, resStr, roundRes, same, shipsStr, sleep, xy,
+} from "./core.ts";
+import { parseThreats, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
+import { notifyTick } from "./notify.ts";
+import { autobuildTick } from "./autobuild.ts";
+export * from "./core.ts";
+export * from "./threats.ts";
 
 // ================= CONFIG =================
-// Toujours depuis Père, toujours avec « attendre l'allié » (rallier). Telegram : /p0 under 12:9 · /p0 over 12:9
-export const PRESETS: Record<string, { ships: Record<string, number>; rallier: boolean }> = {
-  "p0 under": { ships: { cruiser: 6, largeCargo: 10 }, rallier: true },
-  "p0 over":  { ships: { cruiser: 7, largeCargo: 10 }, rallier: true },
-};
-
 // Stock minimal visé sur chaque colonie, complété depuis Père (vide = désactivé)
 export const SUPPLY: Record<string, Partial<Res>> = {
   // pl_rn: { metal: 100_000, crystal: 50_000, deuterium: 20_000 },  // Planète Fils
@@ -29,156 +29,15 @@ const COLLECT_KEEP = num("COLLECT_KEEP", 0.5);           // …et ramène le sto
 const COLLECT_MIN_SEND = 2_000;
 const POLL_MS = num("POLL_MS", 10_000); // poll normal (± 20 % de jitter) — jamais de poll rapide : ça attirerait les soupçons
 const MIN_SLEEP_MS = 200;             // au lieu d'accélérer, on dort jusqu'à l'échéance exacte (décollage / rappel) puis un seul appel
-const SAVE_BEFORE_MS = num("SAVE_BEFORE_MS", 5_000);   // décollage X ms avant l'impact
+const SAVE_BEFORE_MS = num("SAVE_BEFORE_MS", 10_000);  // décollage X ms avant l'impact (sonde OU attaque)
 const RECALL_AFTER_MS = num("RECALL_AFTER_MS", 1_500); // rappel X ms après le dernier impact
-const DEUT_RESERVE = num("DEUT_RESERVE", 5_000);       // deut laissé pour le carburant (conso inconnue → à ajuster)
-
-// Soutes de base (vaisseaux.md). Satellites : ne volent jamais.
-export const CARGO: Record<string, number> = {
-  smallCargo: 5_000, largeCargo: 25_000, lightFighter: 50, heavyFighter: 100, cruiser: 800,
-  battleship: 1_500, colonyShip: 7_500, espionageProbe: 5, recycler: 20_000, pathfinder: 10_000,
-  bomber: 500, destroyer: 2_000, battlecruiser: 750, deathStar: 1_000_000,
-};
-const NEVER_FLY = new Set(["solarSatellite"]);
 // ==========================================
 
-function num(k: string, d: number) { const v = Number(process.env[k]); return Number.isFinite(v) && process.env[k] ? v : d; }
-function bool(k: string, d = false) { const v = process.env[k]; return v == null || v === "" ? d : /^(1|true|on|yes)$/i.test(v); }
-
-// ---------- Flags (modifiables à chaud depuis Telegram) ----------
-export type Flags = { save: boolean; supply: boolean; collect: boolean };
-const flags: Flags = { save: bool("SAVE_ARMED"), supply: bool("SUPPLY_ENABLED"), collect: bool("COLLECT_ENABLED") };
-let pausedFrom: Flags | null = null;
-export const getFlags = (): Flags => ({ ...flags });
-export function setFlag(k: keyof Flags, v: boolean) { flags[k] = v; log("FLAG", k, "=", v); return getFlags(); }
-export function pause() { if (!pausedFrom) pausedFrom = { ...flags }; (Object.keys(flags) as (keyof Flags)[]).forEach((k) => (flags[k] = false)); log("PAUSE"); return getFlags(); }
-export function resume() { if (pausedFrom) Object.assign(flags, pausedFrom); pausedFrom = null; log("RESUME", flags); return getFlags(); }
-
-// ---------- Outils ----------
-export const api = new SpaceK();
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-export const xy = (c: any): Coords => ({ system: c.system, position: c.position });
-const same = (a: any, b: any) => !!a && !!b && a.system === b.system && a.position === b.position;
-const fmt = (c: Coords) => `${c.system}:${c.position}`;
-export const log = (...a: any[]) => console.log(new Date().toISOString(), ...a);
-let notify: ((msg: string) => void) | null = null;
-export const setNotify = (fn: (msg: string) => void) => { notify = fn; };
-export const alert = (...a: any[]) => { log(...a); notify?.(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")); };
-const shipsStr = (s: Record<string, number>) => Object.entries(s).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(", ") || "—";
-const resStr = (r: Res) => `M ${r.metal} · C ${r.crystal} · D ${r.deuterium}`;
-function appendJsonl(file: string, obj: object) { try { appendFileSync(file, JSON.stringify(obj) + "\n"); } catch (e: any) { log("jsonl KO", file, e.message); } }
-
-// ---------- Santé (pour /status et le heartbeat) ----------
-const health = { startedAt: Date.now(), lastPollAt: 0, polls: 0, errors: 0, lastError: "", latencies: [] as number[] };
-export function getHealth() {
-  const l = health.latencies;
-  return { ...health, avgLatencyMs: l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : 0, uptimeMs: Date.now() - health.startedAt };
-}
-export async function getState(): Promise<State> {
-  const t0 = Date.now();
-  const s = await api.state();
-  health.latencies.push(Date.now() - t0); if (health.latencies.length > 20) health.latencies.shift();
-  health.lastPollAt = Date.now(); health.polls++;
-  return s;
-}
-
-// ---------- Envoi de flotte générique (vérifs + résumé, exécution séparée pour la confirmation Telegram) ----------
-export type FleetPlan = {
-  payload: { planetId: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo: Res; speedPercent: number; rallier?: boolean };
-  summary: string;
-};
-export function prepareFleet(s: State, o: {
-  from: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo?: Partial<Res>; speedPercent?: number; rallier?: boolean;
-}): FleetPlan {
-  const p = planetByName(s, o.from);
-  if (!p) throw new Error(`Planète inconnue : ${o.from}`);
-  const ships = Object.fromEntries(Object.entries(o.ships).filter(([, n]) => n > 0));
-  if (!Object.keys(ships).length) throw new Error("Aucun vaisseau");
-  const manque = Object.entries(ships).filter(([k, n]) => (p.ships[k] ?? 0) < n);
-  if (manque.length) throw new Error(`Manque sur ${p.name} : ` + manque.map(([k, n]) => `${k} ${p.ships[k] ?? 0}/${n}`).join(", "));
-  if (s.fleetSlots.used >= s.fleetSlots.total) throw new Error(`Aucun slot de flotte libre (${s.fleetSlots.used}/${s.fleetSlots.total})`);
-  const cargo: Res = { metal: 0, crystal: 0, deuterium: 0, ...o.cargo };
-  const cap = capacity(ships);
-  const total = cargo.metal + cargo.crystal + cargo.deuterium;
-  if (total > cap) throw new Error(`Soute insuffisante : ${total} > ${cap}`);
-  (Object.keys(cargo) as (keyof Res)[]).forEach((k) => { if (cargo[k] > Math.floor(p.resources[k])) throw new Error(`Pas assez de ${k} sur ${p.name} (${Math.floor(p.resources[k])})`); });
-  const payload = { planetId: p.id, mission: o.mission, coords: xy(o.coords), ships, cargo, speedPercent: o.speedPercent ?? 100, ...(o.rallier ? { rallier: true } : {}) };
-  const dest = s.planets.find((x) => same(x.coords, payload.coords));
-  const summary = [
-    `${o.mission} depuis ${p.name} (${fmt(p.coords)}) → ${fmt(payload.coords)}${dest ? ` (${dest.name})` : ""}`,
-    `Vaisseaux : ${shipsStr(ships)}`,
-    total ? `Cargo : ${resStr(cargo)} / soute ${cap}` : `Cargo : vide (soute ${cap})`,
-    `Vitesse ${payload.speedPercent} %${payload.rallier ? " · attendre l'allié ✔" : ""} · slots ${s.fleetSlots.used}/${s.fleetSlots.total}`,
-  ].join("\n");
-  return { payload, summary };
-}
-export const capacity = (ships: Record<string, number>) => Object.entries(ships).reduce((a, [k, n]) => a + (CARGO[k] ?? 0) * n, 0);
-export async function sendFleet(plan: FleetPlan) {
-  const r = await api.sendFleet(plan.payload);
-  log("FLEET", plan.payload.mission, plan.payload.planetId, "→", fmt(plan.payload.coords), r);
-  return r;
-}
-
-// ---------- 1. Presets d'attaque ----------
-export function planAttack(s: State, preset: string, pos: string, speedPercent = 100): FleetPlan {
-  const pr = PRESETS[preset.toLowerCase().replace(/\s+/g, " ").trim()];
-  if (!pr) throw new Error(`Preset inconnu : ${preset} (dispo : ${Object.keys(PRESETS).join(", ")})`);
-  return prepareFleet(s, { from: PERE, mission: "attack", coords: parseCoords(pos), ships: pr.ships, speedPercent, rallier: pr.rallier });
-}
-export async function attack(preset: string, pos: string, speedPercent = 100) {
-  const plan = planAttack(await getState(), preset, pos, speedPercent);
-  return sendFleet(plan);
-}
-export function parseCoords(pos: string): Coords {
-  const m = pos.match(/^(\d+):(\d+)$/);
-  if (!m) throw new Error(`Coordonnées invalides : ${pos} (attendu système:position)`);
-  return { system: +m[1], position: +m[2] };
-}
-
-// ---------- 2. Menaces ----------
-export type Threat = { id: string; mission?: string; arrivesAt: number; target: Coords; attaquant?: string; cibleNom?: string; raw: any };
-let lastIncomingSample = "";
-
-/** Format lu dans le bundle client le 21/09/2026 [BUNDLE], jamais vu en live : `menaces[]` = { fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }.
- *  `incoming[]` est aussi indexé par fleetId. Les anciens noms devinés restent en repli. Brut loggé dans incoming-samples.jsonl. */
-export function parseThreats(s: State): Threat[] {
-  const raw = [...(s.incoming ?? []), ...(s.menaces ?? []), ...(s.alertesVives ?? [])];
-  if (raw.length) {
-    const sample = JSON.stringify({ incoming: s.incoming, menaces: s.menaces, alertesVives: s.alertesVives });
-    if (sample !== lastIncomingSample) {
-      lastIncomingSample = sample;
-      appendJsonl("incoming-samples.jsonl", { now: s.now, ...JSON.parse(sample) });
-      // Format inconnu → on notifie TOUJOURS le brut : au pire un JSON moche, jamais le silence
-      alert(`⚠️ ACTIVITÉ ENTRANTE (brut, ${raw.length} élément(s)) :\n${sample.slice(0, 1500)}`);
-    }
-  }
-  const out = new Map<string, Threat>();
-  for (const f of raw) {
-    if (!f || typeof f !== "object") continue;
-    const id = String(f.fleetId ?? f.id ?? "");
-    const arrivesAt = Number(f.arrivesAt ?? f.impactAt ?? NaN);
-    const target = f.cible?.coords ?? f.target?.coords ?? f.coords;
-    if (!id || !Number.isFinite(arrivesAt) || !target?.system) continue;
-    out.set(id, { id, mission: f.mission, arrivesAt, target: xy(target), attaquant: f.attaquant, cibleNom: f.cible?.nom, raw: f });
-  }
-  return [...out.values()];
-}
-/** Même logique que l'UI du jeu [BUNDLE] : dans `menaces`, tout ce qui n'est ni sondage ni destruction de lune est affiché « Attaque ». */
-export const isAttack = (t: Threat) => t.mission !== "espionage" && t.mission !== "destroyMoon";
-export const threatenedPlanetIds = (s: State, threats: Threat[]) =>
-  new Set(threats.filter(isAttack).map((t) => s.planets.find((p) => same(p.coords, t.target))?.id).filter(Boolean) as string[]);
-
-// ---------- 3. Fleet-save par planète ----------
+// ---------- 1. Fleet-save par planète ----------
 type SaveState = { dest: string; fleetId?: string; recallAt: number; simulated: boolean; sentAt: number };
 const saves = new Map<string, SaveState>();     // planetId → save en cours
 const announced = new Set<string>();            // menaces déjà notifiées
 
-function fillCargo(r: Res, cap: number): Res {
-  const d = Math.min(Math.max(0, Math.floor(r.deuterium) - DEUT_RESERVE), cap); cap -= d;
-  const c = Math.min(Math.floor(r.crystal), cap); cap -= c;
-  const m = Math.min(Math.floor(r.metal), cap);
-  return { metal: m, crystal: c, deuterium: d };
-}
 /** Destination : la planète la plus proche non menacée si possible, sinon la plus proche (être en vol suffit). */
 function pickDest(s: State, p: Planet, threatened: Set<string>): Planet | undefined {
   const others = s.planets.filter((x) => x.id !== p.id)
@@ -214,17 +73,16 @@ async function doRecall(s: State, p: Planet, st: SaveState) {
 }
 
 async function fleetSaveTick(s: State, threats: Threat[]) {
-  const attacks = threats.filter(isAttack);
+  const triggers = threats.filter(triggersSave);
   for (const t of threats) {
     if (announced.has(t.id)) continue;
     announced.add(t.id);
     const p = s.planets.find((x) => same(x.coords, t.target));
-    const label = t.mission === "espionage" ? "🔍 SONDAGE" : t.mission === "destroyMoon" ? "🌑 DESTRUCTION DE LUNE" : "🚨 ATTAQUE";
-    alert(`${label}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? t.cibleNom ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`);
+    alert(`${threatLabel(t)}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? t.cibleNom ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`);
   }
   const threatened = threatenedPlanetIds(s, threats);
   for (const p of s.planets) {
-    const mine = attacks.filter((t) => same(t.target, p.coords));
+    const mine = triggers.filter((t) => same(t.target, p.coords));
     const st = saves.get(p.id);
     if (mine.length) {
       // Menace périmée (impact déjà passé mais encore listée) : on ne décolle pas après coup
@@ -241,7 +99,7 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
   // Si on avait déjà décollé, le rappel se fait à recallAt comme prévu.
 }
 
-// ---------- 4. Approvisionnement depuis Père ----------
+// ---------- 2. Approvisionnement depuis Père ----------
 let lastSupply = 0;
 async function supply(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
@@ -269,7 +127,7 @@ async function supply(s: State, threatened: Set<string>) {
   }
 }
 
-// ---------- 5. Collecte colonies → Père (BetweenLands déborde) ----------
+// ---------- 3. Collecte colonies → Père (BetweenLands déborde) ----------
 let lastCollect = 0;
 async function collect(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
@@ -300,7 +158,7 @@ async function collect(s: State, threatened: Set<string>) {
   }
 }
 
-// ---------- 6. Capture de données (formule carburant / distance) ----------
+// ---------- 4. Capture de données (formule carburant / distance) ----------
 const seenFleets = new Set<string>();
 function sampleFleets(s: State) {
   for (const f of s.fleets ?? []) {
@@ -315,61 +173,22 @@ function sampleFleets(s: State) {
   if (seenFleets.size > 5_000) seenFleets.clear();
 }
 
-// ---------- Galaxie : planètes d'un joueur ----------
-// /galaxy?system=N par système occupé (carte → on saute les vides), cache 30 min, appels espacés : pas de rafale.
-const GALAXY_CACHE_MS = 30 * 60_000;
-const galaxyCache = new Map<number, { at: number; sys: import("./spacek-client.ts").GalaxySystem }>();
-async function galaxySystemCached(n: number) {
-  const c = galaxyCache.get(n);
-  if (c && Date.now() - c.at < GALAXY_CACHE_MS) return c.sys;
-  const sys = await api.galaxySystem(n);
-  galaxyCache.set(n, { at: Date.now(), sys });
-  await sleep(150);
-  return sys;
-}
-export type PlayerPlanet = { system: number; position: number; name: string; moon: boolean; vacances: boolean; protection: boolean; debris?: { metal: number; crystal: number } | null };
-/** Toutes les planètes d'un joueur (nom insensible à la casse) + sa ligne de classement si trouvée. */
-export async function findPlayer(query: string): Promise<{ row?: import("./spacek-client.ts").LeaderboardRow; rank?: number; planets: PlayerPlanet[] }> {
-  const q = query.toLowerCase().trim();
-  const { rows } = await api.leaderboard();
-  const idx = rows.findIndex((r) => r.name.toLowerCase() === q);
-  const row = idx >= 0 ? rows[idx] : rows.find((r) => r.name.toLowerCase().includes(q));
-  const name = (row?.name ?? query).toLowerCase();
-  const carte = await api.galaxy();
-  const planets: PlayerPlanet[] = [];
-  for (const sy of carte.systemes.filter((x) => x.planetes > 0)) {
-    const sys = await galaxySystemCached(sy.system);
-    for (const sl of sys.slots) {
-      if (sl.planet && sl.planet.ownerName.toLowerCase() === name)
-        planets.push({ system: sys.system, position: sl.position, name: sl.planet.name, moon: !!sl.planet.moon, vacances: sl.planet.vacances, protection: !!sl.planet.protection, debris: sl.debris });
-    }
-    if (row && planets.length >= row.planets) break; // toutes trouvées : on arrête de parcourir
-  }
-  return { row, rank: idx >= 0 ? idx + 1 : undefined, planets };
-}
-export function playerSummary(r: Awaited<ReturnType<typeof findPlayer>>, query: string): string {
-  const head = r.row
-    ? `${r.row.name}${r.rank ? ` — #${r.rank}` : ""} · ${r.row.planets} planète(s) · puissance ${r.row.combatPower.toLocaleString("fr-FR")} · dév. ${r.row.development}${r.row.titre ? ` · ${r.row.titre}` : ""}`
-    : `Joueur « ${query} » absent du classement`;
-  if (!r.planets.length) return `${head}\nAucune planète trouvée dans la galaxie.`;
-  return [head, ...r.planets.map((p) =>
-    `• ${p.system}:${p.position} ${p.name}${p.moon ? " 🌙" : ""}${p.vacances ? " (vacances)" : ""}${p.protection ? " 🛡 protégé" : ""}${p.debris ? ` · débris M ${p.debris.metal} C ${p.debris.crystal}` : ""}`)].join("\n");
-}
-
 // ---------- Résumés texte ----------
 export function statusSummary(s: State): string {
   const threats = parseThreats(s);
   const h = getHealth();
   const f = getFlags();
+  const e = s.expedition;
   const lines = [
-    `Slots ${s.fleetSlots.used}/${s.fleetSlots.total} · ${s.fleets.length} flotte(s) en vol · ${threats.length} menace(s)`,
-    `Flags : save ${f.save ? "ARMÉ" : "observation"} · supply ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"}`,
+    `Slots ${s.fleetSlots.used}/${s.fleetSlots.total} · ${s.fleets.length} flotte(s) en vol · ${threats.length} menace(s)` +
+      (e ? ` · expé ${e.inFlight}/${e.slots} (${e.lanceesAujourdhui}/${e.maxPerPlayerPer24h} auj.)` : ""),
+    `Flags : save ${f.save ? "ARMÉ" : "observation"} · supply ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`,
     `Latence /state ${h.avgLatencyMs} ms · ${h.polls} polls · ${h.errors} erreurs · uptime ${Math.round(h.uptimeMs / 60_000)} min`,
-    ...s.planets.map((p) => `• ${p.name} ${fmt(p.coords)} — ${resStr(roundRes(p.resources))}${p.buildQueue ? " 🏗" : ""}${p.shipQueue ? " 🚀" : ""}`),
+    ...s.planets.map((p) => `• ${p.name} ${fmt(p.coords)} — ${resStr(roundRes(p.resources))}${p.buildQueue ? ` 🏗 ${p.buildQueue.key} ${p.buildQueue.targetLevel}` : ""}${p.shipQueue ? ` 🚀 ${p.shipQueue.remaining} ${p.shipQueue.key}` : ""}`),
+    s.player.researchQueue ? `🔬 ${s.player.researchQueue.key} niv. ${s.player.researchQueue.targetLevel} — fin dans ${Math.max(0, Math.round((s.player.researchQueue.finishesAt - s.now) / 60_000))} min` : "",
   ];
-  return lines.join("\n");
+  return lines.filter(Boolean).join("\n");
 }
-export const roundRes = (r: Res): Res => ({ metal: Math.floor(r.metal), crystal: Math.floor(r.crystal), deuterium: Math.floor(r.deuterium) });
 /** /flotte : vaisseaux à quai par planète (Père d'abord) + flottes en vol. */
 export function shipsSummary(s: State): string {
   const order = [...s.planets].sort((a, b) => (a.id === PERE ? -1 : b.id === PERE ? 1 : 0));
@@ -395,7 +214,7 @@ export function threatsSummary(s: State): string {
   if (!ts.length) return "Aucune menace.";
   return ts.map((t) => {
     const p = s.planets.find((x) => same(x.coords, t.target));
-    return `• ${t.mission ?? "attack"}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`;
+    return `• ${threatLabel(t)}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`;
   }).join("\n");
 }
 
@@ -403,7 +222,7 @@ export function threatsSummary(s: State): string {
  *  Pas de poll rapide : un seul appel supplémentaire, calé sur l'échéance en horloge serveur. */
 function pollDelay(s: State, threats: Threat[]): number {
   const deadlines = [
-    ...threats.filter((t) => isAttack(t) && !saves.has(planetIdAt(s, t.target) ?? "")).map((t) => t.arrivesAt - SAVE_BEFORE_MS),
+    ...threats.filter((t) => triggersSave(t) && !saves.has(planetIdAt(s, t.target) ?? "")).map((t) => t.arrivesAt - SAVE_BEFORE_MS),
     ...[...saves.values()].map((st) => st.recallAt),
   ].filter((d) => d > s.now);
   const normal = POLL_MS * (0.8 + Math.random() * 0.4);
@@ -431,12 +250,14 @@ export async function watch() {
       sampleFleets(s);
       const threats = parseThreats(s);
       await fleetSaveTick(s, threats);
+      try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
+      await autobuildTick(s).catch((e) => alert("AUTOBUILD KO", e.message));
       await sleep(pollDelay(s, threats));
     } catch (e: any) {
-      health.errors++; health.lastError = e.message;
+      recordError(e.message);
       log("ERR", e.message);
       notifyError(e.message);
       await sleep(10_000);
@@ -447,9 +268,8 @@ export async function watch() {
 // ---------- CLI ----------
 const isMain = /bot\.ts$/.test(process.argv[1] ?? "");
 if (isMain) {
-  const [cmd, a, b] = process.argv.slice(2);
-  if (cmd === "attack") attack(a, b).then((r) => log(r)).catch((e) => { log(e.message); process.exit(1); }); // ex. attack "p0 under" 12:9
-  else if (cmd === "watch") watch();
+  const [cmd] = process.argv.slice(2);
+  if (cmd === "watch") watch();
   else if (cmd === "status") getState().then((s) => console.log(statusSummary(s))).catch((e) => { log(e.message); process.exit(1); });
-  else console.log("Usage : attack <preset> <système:position> | watch | status");
+  else console.log("Usage : watch | status");
 }

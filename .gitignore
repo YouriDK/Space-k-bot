@@ -4,6 +4,9 @@ refresh_token.txt*
 
 # Données capturées par le bot
 *.jsonl
+state-snapshot.json
+seen.json
+bundle.js
 
 node_modules/
 .DS_Store
