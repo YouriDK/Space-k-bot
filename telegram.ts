@@ -11,7 +11,7 @@ import {
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
-import { buildingsSummary, planSummary, setPlanetEnabled, BUILDING_KEYS } from "./autobuild.ts";
+import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
 import { MISSIONS, type Mission, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
@@ -242,12 +242,17 @@ async function handle(text: string, chatId: string) {
     case "/plan": return send(await withState(planSummary), chatId);
     case "/batiments": case "/buildings": { need(args, 1, "/batiments <planète>"); return send(await withState((s) => buildingsSummary(planet(s, args[0]))), chatId); }
     case "/autobuild": {
+      // /autobuild on|off (global) · /autobuild <planète…> on|off · /autobuild <planète…> (état). Le nom peut contenir des espaces.
       need(args, 1, "/autobuild on|off | /autobuild <planète> on|off");
-      if (args.length === 1) { const f = setFlag("autobuild", /^(on|1|true)$/i.test(args[0])); return send(flagsStr(f), chatId); }
-      const v = /^(on|1|true)$/i.test(args[1]);
+      const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
+      const asBool = (x: string) => /^(on|1|true)$/i.test(x);
+      if (args.length === 1 && isOnOff(args[0])) { const f = setFlag("autobuild", asBool(args[0])); return send(flagsStr(f), chatId); }
+      const last = args[args.length - 1];
+      const nameParts = isOnOff(last) ? args.slice(0, -1) : args;
       const s = await getState();
-      const p = planet(s, args[0]);
-      const pp = setPlanetEnabled(p.id, v, s);
+      const p = planet(s, nameParts.join(" "));
+      if (!isOnOff(last)) return send(`Auto-construction ${p.name} : ${planetPlan(loadPlan(s), p.id).enabled ? "on" : "off"} · global ${getFlags().autobuild ? "ON" : "OFF"}\n${planSummary(s)}`, chatId);
+      const pp = setPlanetEnabled(p.id, asBool(last), s);
       return send(`Auto-construction ${p.name} : ${pp.enabled ? "on" : "off"}${!getFlags().autobuild ? " (flag global OFF → /autobuild on)" : ""}\n${planSummary(s)}`, chatId);
     }
     case "/status": return send(await withState(statusSummary), chatId);
