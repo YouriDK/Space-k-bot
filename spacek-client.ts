@@ -77,10 +77,17 @@ export function planetByName(s: State, q: string): Planet | undefined {
   const n = norm(q);
   const m = n.match(/^(\d+):(\d+)$/);
   if (m) return s.planets.find((p) => p.coords.system === +m[1] && p.coords.position === +m[2]);
+  const initials = (name: string) => (name.match(/[A-ZÀ-Ý][a-zà-ÿ]*/g) ?? []).map((w) => norm(w[0])).join(""); // « BetweenLands » → « bl »
   return s.planets.find((p) => p.id.toLowerCase() === n)
+    ?? s.planets.find((p) => PLANET_ALIASES[n] === p.id)
     ?? s.planets.find((p) => norm(p.name) === n)
-    ?? s.planets.find((p) => norm(p.name).includes(n)); // « pere » ↔ « Planète Père »
+    ?? s.planets.find((p) => norm(p.name).includes(n)) // « pere » ↔ « Planète Père »
+    ?? s.planets.find((p) => initials(p.name) === n);  // « bl » ↔ « BetweenLands »
 }
+/** Raccourcis Telegram → id de planète (à compléter si une planète est renommée / colonisée). */
+export const PLANET_ALIASES: Record<string, string> = {
+  pere: "pl_2w", fils: "pl_rn", oncle: "pl_402", cousin: "pl_4z8", bl: "pl_7vb", between: "pl_7vb", betweenlands: "pl_7vb",
+};
 
 export class SpaceK {
   private session: string | null = null;
