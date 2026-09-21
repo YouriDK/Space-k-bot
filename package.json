@@ -1,0 +1,20 @@
+{
+  "name": "spacek-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot Space-K : fleet-save, logistique et pilotage Telegram",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "bot": "tsx --env-file=.env bot.ts",
+    "telegram": "tsx --env-file=.env telegram.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

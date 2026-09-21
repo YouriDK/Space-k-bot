@@ -1,0 +1,9 @@
+# Secrets — jamais commités
+refresh_token.txt*
+.env
+
+# Données capturées par le bot
+*.jsonl
+
+node_modules/
+.DS_Store
