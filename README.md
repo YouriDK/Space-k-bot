@@ -93,9 +93,11 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 - Pas de slot libre → pas de décollage, alerte claire. Pas de slot réservé (décision : on en a assez).
 - **Hors périmètre** : missiles, lunes/`destroyMoon`.
 
-### 2. Approvisionnement (`supply`)
-Toutes les 60 s, complète chaque colonie de `SUPPLY` jusqu'à ses seuils avec des GT depuis Père. Pas de doublon si un
-transport est en route, plafonné à la capacité cible, **jamais vers une planète menacée**. `SUPPLY` est vide pour l'instant (seuils à fournir).
+### 2. Ravitaillement (`/supply`) — manuel, depuis Père
+`/supply fils 40 14 90` → 40 000 métal, 14 000 cristal, 90 000 deut vers Fils (quantités en milliers ; `40k`, `1m`, ou brut ≥ 1000).
+- **PT d'abord** (22 000 de vitesse) dans une flotte à part, **GT en complément** dans une 2e flotte (dans une même flotte tout vole à la vitesse du plus lent). Un seul slot libre → envoi mixte avec avertissement.
+- Plafonné aux stocks de Père (garde `DEUT_RESERVE`) et à la place libre sur la cible. Part immédiatement, récap ✅ par flotte.
+- Le job automatique par seuils (`SUPPLY` dans bot.ts, flag `/supply_auto`) existe mais n'a pas de seuils configurés.
 
 ### 3. Collecte (`collect`) — colonies → Père
 BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si une ressource dépasse `COLLECT_THRESHOLD` (90 %)

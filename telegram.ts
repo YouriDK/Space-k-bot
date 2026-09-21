@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, log, planetOrThrow, type FleetPlan, type Flags,
+  CARGO, DEUT_RESERVE, PERE, log, planetOrThrow, type FleetPlan, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -89,6 +89,66 @@ const parseKv = (toks: string[]) => {
   if (m != null) cargo.metal = m; if (c != null) cargo.crystal = c; if (d != null) cargo.deuterium = d; // pas d'undefined qui écraserait le défaut 0
   return { cargo, speedPercent: kv.speed };
 };
+/** Quantités « humaines » : 40 → 40 000 (milliers), 40k → 40 000, 1m → 1 000 000, 250000 → tel quel (≥ 1000). */
+const parseK = (x: string): number => {
+  const m = x.toLowerCase().match(/^(\d+(?:[.,]\d+)?)([km])?$/);
+  if (!m) throw new Error(`Quantité invalide : ${x} (ex. 40, 40k, 1m)`);
+  const n = Number(m[1].replace(",", "."));
+  return Math.floor(m[2] === "m" ? n * 1_000_000 : m[2] === "k" || n < 1000 ? n * 1000 : n);
+};
+/** Ravitaillement depuis Père : plafonné aux stocks de Père (garde DEUT_RESERVE) et à la place libre sur la cible.
+ *  PT d'abord (plus rapides : 22 000 vs 14 250), dans une flotte À PART ; le reste en GT dans une 2e flotte
+ *  (dans une même flotte tout vole à la vitesse du plus lent). Un seul slot libre → envoi mixte avec avertissement. */
+function planSupply(s: State, to: string, want: Res): { plans: FleetPlan[]; notes: string[] } {
+  const pere = planetOrThrow(s, PERE);
+  const dest = planetOrThrow(s, to);
+  if (dest.id === pere.id) throw new Error("Père est déjà la source");
+  const notes: string[] = [];
+  const cap = (k: keyof Res, avail: number) => {
+    let v = Math.min(want[k], Math.max(0, Math.floor(avail)));
+    if (v < want[k]) notes.push(`${k} limité au stock de Père (${v.toLocaleString("fr-FR")})`);
+    const room = Math.max(0, Math.floor(dest.capacities[k] - dest.resources[k]));
+    if (v > room) { notes.push(`${k} plafonné à la place libre sur ${dest.name} (${room.toLocaleString("fr-FR")})`); v = room; }
+    return v;
+  };
+  let left: Res = { metal: cap("metal", pere.resources.metal), crystal: cap("crystal", pere.resources.crystal), deuterium: cap("deuterium", pere.resources.deuterium - DEUT_RESERVE) };
+  const total = left.metal + left.crystal + left.deuterium;
+  if (total <= 0) throw new Error("Rien à envoyer (stocks de Père ou place sur la cible insuffisants)");
+  const freeSlots = s.fleetSlots.total - s.fleetSlots.used;
+  const pt = pere.ships.smallCargo ?? 0, gt = pere.ships.largeCargo ?? 0;
+  const take = (r: Res, capa: number): Res => { // remplit une soute dans l'ordre deut > cristal > métal
+    const d = Math.min(r.deuterium, capa); capa -= d; const c = Math.min(r.crystal, capa); capa -= c; const m = Math.min(r.metal, capa);
+    return { metal: m, crystal: c, deuterium: d };
+  };
+  const minus = (a: Res, b: Res): Res => ({ metal: a.metal - b.metal, crystal: a.crystal - b.crystal, deuterium: a.deuterium - b.deuterium });
+  const plans: FleetPlan[] = [];
+  const nPt = Math.min(pt, Math.ceil(total / CARGO.smallCargo));
+  const nGtAll = Math.min(gt, Math.ceil(Math.max(0, total - nPt * CARGO.smallCargo) / CARGO.largeCargo));
+  if (nPt && nGtAll && freeSlots < 2) {
+    // un seul slot : flotte mixte (vole à la vitesse des GT)
+    notes.push("⚠️ un seul slot libre : PT + GT dans la même flotte, à la vitesse des GT");
+    const ships = { smallCargo: nPt, largeCargo: nGtAll };
+    plans.push(prepareFleet(s, { from: PERE, mission: "transport", coords: dest.coords, ships, cargo: take(left, nPt * CARGO.smallCargo + nGtAll * CARGO.largeCargo), label: "📦 Ravitaillement (mixte)" }));
+  } else {
+    if (nPt) {
+      const cargo = take(left, nPt * CARGO.smallCargo); left = minus(left, cargo);
+      plans.push(prepareFleet(s, { from: PERE, mission: "transport", coords: dest.coords, ships: { smallCargo: nPt }, cargo, label: "📦 Ravitaillement — PT (rapides)" }));
+    }
+    const rest = left.metal + left.crystal + left.deuterium;
+    if (rest > 0) {
+      const nGt = Math.min(gt, Math.ceil(rest / CARGO.largeCargo));
+      if (!nGt) notes.push(`⚠️ il reste ${rest.toLocaleString("fr-FR")} sans transporteur disponible`);
+      else {
+        const cargo = take(left, nGt * CARGO.largeCargo); left = minus(left, cargo);
+        plans.push(prepareFleet(s, { from: PERE, mission: "transport", coords: dest.coords, ships: { largeCargo: nGt }, cargo, label: "📦 Ravitaillement — GT (complément)", slotsReserved: plans.length }));
+        const still = left.metal + left.crystal + left.deuterium;
+        if (still > 0) notes.push(`⚠️ soute insuffisante : ${still.toLocaleString("fr-FR")} non envoyés`);
+      }
+    }
+  }
+  if (!plans.length) throw new Error("Aucun transporteur sur Père");
+  return { plans, notes };
+}
 const coordsOf = (s: State, q: string) => { try { return planetOrThrow(s, q).coords; } catch { return parseCoords(q); } };
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
@@ -197,10 +257,22 @@ async function handle(text: string, chatId: string) {
     case "/presets": return send(presetsHelp(), chatId);
     case "/flags": return send(flagsStr(getFlags()), chatId);
 
-    case "/save": case "/supply": case "/collect": {
+    case "/supply": {
+      // /supply fils 40 14 90 → 40 000 métal, 14 000 cristal, 90 000 deut depuis Père (PT puis GT), part immédiatement
+      need(args, 4, "/supply <planète> <métal> <cristal> <deut>  (en milliers : 40 = 40 000 ; accepte 40k, 1m)");
+      const [to, m, c, d] = args;
+      const { plans, notes } = await withState((s) => planSupply(s, to, { metal: parseK(m), crystal: parseK(c), deuterium: parseK(d) }));
+      const out: string[] = [];
+      for (const plan of plans) {
+        try { await sendFleet(plan); out.push(`✅ ${plan.summary}`); }
+        catch (e: any) { out.push(`❌ ${plan.summary}\n${e.message.slice(0, 150)}`); }
+      }
+      return send([...out, ...notes].join("\n\n"), chatId);
+    }
+    case "/save": case "/supply_auto": case "/collect": {
       need(args, 1, `${cmd} on|off`);
       const v = /^(on|1|true)$/i.test(args[0]);
-      const key = cmd.slice(1) as keyof Flags;
+      const key = (cmd === "/supply_auto" ? "supply" : cmd.slice(1)) as keyof Flags;
       const f = setFlag(key, v);
       return send(`${key === "save" && v ? "🔴 FLEET-SAVE ARMÉ" : ""}\n${flagsStr(f)}`.trim(), chatId);
     }
