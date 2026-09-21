@@ -65,7 +65,7 @@ Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'éme
 Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect on`, `/pause`, `/resume`).
 
 ### 1. Fleet-save (par planète, multi-vagues)
-- Poll `/state` toutes les 3 s (0,5 s dès qu'une attaque est en approche). Tous les timings utilisent `now` (horloge serveur).
+- Poll `/state` toutes les 10 s (± 20 % de jitter, réglable `POLL_MS`). **Jamais de poll rapide** (soupçons) : quand une échéance approche (décollage à `arrivesAt − SAVE_BEFORE_MS`, rappel à `recallAt`), la boucle dort jusqu'à l'échéance exacte puis fait un seul appel. Tous les timings utilisent `now` (horloge serveur).
 - Menaces filtrées sur **`mission === "attack"`** (un transport allié du pacte ne déclenche rien ; `espionage` → notification seulement).
   Si le champ `mission` est absent du format réel, la menace est traitée comme une attaque par prudence. [HYPOTHÈSE]
 - **Groupement par planète cible** : `saveAt = min(arrivesAt) − 5 s`, `recallAt = max(arrivesAt) + 1,5 s`.

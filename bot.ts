@@ -27,8 +27,8 @@ const COLLECT_EVERY_MS = 60_000;
 const COLLECT_THRESHOLD = num("COLLECT_THRESHOLD", 0.9); // déclenche quand une ressource dépasse 90 % de la capacité
 const COLLECT_KEEP = num("COLLECT_KEEP", 0.5);           // …et ramène le stock à 50 % (évite un vol toutes les minutes)
 const COLLECT_MIN_SEND = 2_000;
-const POLL_MS = 3_000;                // poll normal
-const POLL_ALERT_MS = 500;            // poll quand une menace est en approche
+const POLL_MS = num("POLL_MS", 10_000); // poll normal (± 20 % de jitter) — jamais de poll rapide : ça attirerait les soupçons
+const MIN_SLEEP_MS = 200;             // au lieu d'accélérer, on dort jusqu'à l'échéance exacte (décollage / rappel) puis un seul appel
 const SAVE_BEFORE_MS = num("SAVE_BEFORE_MS", 5_000);   // décollage X ms avant l'impact
 const RECALL_AFTER_MS = num("RECALL_AFTER_MS", 1_500); // rappel X ms après le dernier impact
 const DEUT_RESERVE = num("DEUT_RESERVE", 5_000);       // deut laissé pour le carburant (conso inconnue → à ajuster)
@@ -196,6 +196,7 @@ async function doSave(s: State, p: Planet, threats: Threat[], recallAt: number, 
 
 async function doRecall(s: State, p: Planet, st: SaveState) {
   saves.delete(p.id);
+  if (!st.dest) return; // il n'y avait rien à sauver
   if (st.simulated) { alert(`[OBSERVATION] j'AURAIS rappelé la flotte de ${p.name} maintenant`); return; }
   // Si la réponse du POST n'a pas donné d'id : flotte deploy la plus récente partie de p
   const mine = st.fleetId
@@ -219,6 +220,8 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
     const mine = attacks.filter((t) => same(t.target, p.coords));
     const st = saves.get(p.id);
     if (mine.length) {
+      // Menace périmée (impact déjà passé mais encore listée) : on ne décolle pas après coup
+      if (!st && mine.every((t) => t.arrivesAt <= s.now)) continue;
       const saveAt = Math.min(...mine.map((t) => t.arrivesAt)) - SAVE_BEFORE_MS;
       const recallAt = Math.max(...mine.map((t) => t.arrivesAt)) + RECALL_AFTER_MS;
       if (st) { if (recallAt > st.recallAt) { st.recallAt = recallAt; log("Nouvelle vague sur", p.name, "→ rappel repoussé"); } }
@@ -341,6 +344,19 @@ export function threatsSummary(s: State): string {
   }).join("\n");
 }
 
+/** Prochain réveil : le poll normal (avec jitter), ou plus tôt si une échéance (décollage / rappel) tombe avant.
+ *  Pas de poll rapide : un seul appel supplémentaire, calé sur l'échéance en horloge serveur. */
+function pollDelay(s: State, threats: Threat[]): number {
+  const deadlines = [
+    ...threats.filter((t) => isAttack(t) && !saves.has(planetIdAt(s, t.target) ?? "")).map((t) => t.arrivesAt - SAVE_BEFORE_MS),
+    ...[...saves.values()].map((st) => st.recallAt),
+  ].filter((d) => d > s.now);
+  const normal = POLL_MS * (0.8 + Math.random() * 0.4);
+  const next = deadlines.length ? Math.min(...deadlines) - s.now : Infinity;
+  return Math.max(MIN_SLEEP_MS, Math.min(normal, next));
+}
+const planetIdAt = (s: State, c: Coords) => s.planets.find((p) => same(p.coords, c))?.id;
+
 // ---------- Boucle ----------
 export async function watch() {
   log("watch démarré", getFlags());
@@ -353,7 +369,7 @@ export async function watch() {
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
-      await sleep(threats.some(isAttack) || saves.size ? POLL_ALERT_MS : POLL_MS);
+      await sleep(pollDelay(s, threats));
     } catch (e: any) {
       health.errors++; health.lastError = e.message;
       log("ERR", e.message);

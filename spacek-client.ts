@@ -74,6 +74,7 @@ export class SpaceK {
   private session: string | null = null;
   private sessionExp = 0; // secondes epoch
   private ticketLogged = false;
+  private minting: Promise<void> | null = null; // verrou : un seul mint à la fois (rotation Keycloak)
 
   constructor(private refreshFile = process.env.REFRESH_FILE ?? "./refresh_token.txt") {}
 
@@ -144,7 +145,12 @@ export class SpaceK {
   }
 
   private async token(): Promise<string> {
-    if (!this.session || Date.now() / 1000 > this.sessionExp - 300) await this.mint();
+    if (!this.session || Date.now() / 1000 > this.sessionExp - 300) {
+      // Deux appels concurrents (watch + Telegram) ne doivent pas lancer deux refresh Keycloak
+      // avec le même refresh token : le second serait refusé (rotation) → on partage la promesse.
+      this.minting ??= this.mint().finally(() => { this.minting = null; });
+      await this.minting;
+    }
     return this.session!;
   }
 
