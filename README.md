@@ -120,7 +120,7 @@ Avant la confirmation, la cible est vérifiée par `GET /galaxy?system=N` : posi
 sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de la planète et son propriétaire.
 
 ### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
-15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps après une seule confirmation.
+15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps, **immédiatement** (pas de confirmation) ; récap ✅/❌ par planète.
 Pas assez de sondes → `floor(dispo / nb planètes)` par planète. Pas assez de slots → seules les N premières planètes.
 Les planètes du joueur viennent du relevé `galaxy-snapshot.json` (systèmes à vérifier) puis de `/galaxy?system=N` (cache 30 min) ;
 si le compte diffère du classement, parcours complet. Raccourcis prévus : `/scan_2003CP0`, `/scan_987`, `/scan_Thomas`, `/scan_aaa` (tout nom marche).
@@ -167,7 +167,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
 `/autobuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
-**Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; une confirmation par lot pour les scans) — `/help full` :
+**Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
 /p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>
 /scan_<joueur> · /scan <joueur>
