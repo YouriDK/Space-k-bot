@@ -15,6 +15,7 @@ import { notifyTick } from "./notify.ts";
 import { autobuildTick } from "./autobuild.ts";
 import { piratesTick } from "./pirates.ts";
 import { salvageTick } from "./salvage.ts";
+import { nextBuildTick } from "./nextbuild.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
 
@@ -273,6 +274,7 @@ export async function watch() {
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
+      await nextBuildTick(s).catch((e) => log("NEXT KO", e.message));
       await autobuildTick(s).catch((e) => alert("AUTOBUILD KO", e.message));
       await sleep(pollDelay(s, threats));
     } catch (e: any) {

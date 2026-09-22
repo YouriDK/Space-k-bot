@@ -6,15 +6,16 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, fleetResultStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
+  CARGO, DEUT_RESERVE, PERE, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
 import { salvageSummary } from "./salvage.ts";
+import { buildChoices, clearNext, getNext, nextSummary, setNext } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
-import { MISSIONS, type Mission, type Res, type State } from "./spacek-client.ts";
+import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
 const CHAT_ID = (process.env.TG_CHAT_ID ?? "").trim();
@@ -64,11 +65,28 @@ function askConfirm(summary: string, run: () => Promise<any>, chatId: string) {
   });
 }
 async function onCallback(cq: any) {
-  const [verb, id] = String(cq.data ?? "").split(":");
+  const [verb, id, arg] = String(cq.data ?? "").split(":");
   const chatId = String(cq.message?.chat?.id ?? "");
   const p = pending.get(id);
   const done = (text: string) => tg("answerCallbackQuery", { callback_query_id: cq.id, text: text.slice(0, 200) }).catch(() => {});
   if (chatId !== CHAT_ID) return done("Non autorisé");
+  // /next : choix de la planète puis du bâtiment (pas de ✅ : le choix dans la liste vaut validation)
+  if (verb === "nxt" || verb === "nxb") {
+    const s = await getState();
+    const pl = s.planets.find((x) => x.id === id);
+    if (!pl) return done("Planète inconnue");
+    if (verb === "nxt") {
+      await edit(chatId, cq.message?.message_id, `⏭ ${pl.name} — quelle construction lancer dès que la file se libère ?`, nextKeyboard(pl));
+      return done("");
+    }
+    const c = buildChoices(pl).find((x) => x.key === arg);
+    if (!c) return done("Bâtiment inconnu");
+    setNext(pl.id, c.key, c.name);
+    await edit(chatId, cq.message?.message_id,
+      `⏭ ${pl.name} : ${c.name} niveau ${c.level + 1} mis en attente.\n${resStr(c.cost)} · ${fmtDur(c.durationMs)}\n` +
+      (pl.buildQueue ? `Lancé dès la fin de ${pl.buildQueue.key} (dans ${fmtDur(pl.buildQueue.finishesAt - s.now)}).` : "La file est libre : lancement au prochain passage (< 1 min)."));
+    return done("Mis en attente");
+  }
   if (cq.message) tg("editMessageReplyMarkup", { chat_id: chatId, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
   if (!p) return done("Demande inconnue ou déjà traitée");
   pending.delete(id);
@@ -78,6 +96,25 @@ async function onCallback(cq: any) {
   try { send(`✅ OK\n${p.summary}\n→ ${short(await p.run())}`, chatId); }
   catch (e: any) { send(`❌ Échec : ${e.message}`, chatId); }
 }
+const edit = (chatId: string, messageId: number | undefined, text: string, markup?: object) =>
+  messageId
+    ? tg("editMessageText", { chat_id: chatId, message_id: messageId, text, ...(markup ? { reply_markup: markup } : { reply_markup: { inline_keyboard: [] } }) }).catch(() => send(text, chatId, markup ? { reply_markup: markup } : undefined))
+    : Promise.resolve(send(text, chatId, markup ? { reply_markup: markup } : undefined));
+/** Clavier : une planète par ligne. */
+const planetKeyboard = (s: State) => ({
+  inline_keyboard: s.planets.map((p) => [{
+    text: `${p.name}${p.buildQueue ? ` 🏗 ${fmtDur(p.buildQueue.finishesAt - s.now)}` : " · libre"}${getNext(p.id) ? " ⏭" : ""}`,
+    callback_data: `nxt:${p.id}`,
+  }]),
+});
+/** Clavier : les bâtiments constructibles d'une planète (verrouillés exclus). */
+const nextKeyboard = (p: Planet) => ({
+  inline_keyboard: buildChoices(p).filter((c) => !c.locked).map((c) => [{
+    text: `${c.name} ${c.level} → ${c.level + 1} · ${Math.round((c.cost.metal + c.cost.crystal + c.cost.deuterium) / 1000)}k · ${fmtDur(c.durationMs)}`,
+    callback_data: `nxb:${p.id}:${c.key}`,
+  }]),
+});
+
 /** Résumé d'une réponse d'action : un POST réussi renvoie l'ÉTAT COMPLET, qu'on ne montre jamais. */
 const short = (x: any): string => {
   if (x == null) return "✅ fait";
@@ -184,6 +221,8 @@ Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
 /threats — menaces en approche
 /pirates — caches pirates T0/T1/T2 connues, avec le preset conseillé
 /joueur <nom> — planètes, rang et puissance d'un joueur
+/next — mettre une construction en attente : elle part dès que la file se libère (même la nuit)
+/nexts — ce qui est en attente sur chaque planète
 /plan — auto-construction : planètes actives, palier, prochain bâtiment
 /batiments <planète> — les 12 bâtiments : niveau, coût, durée
 /flags — état des automatismes
@@ -307,6 +346,24 @@ async function handle(text: string, chatId: string) {
       if (args[1] != null && !Number.isFinite(h)) throw new Error(`Durée invalide : ${args[1]}`);
       return fleetAction(await withState((s) => planExpedition(s, kind, h)));
     }
+    case "/next": {
+      // /next → liste des planètes · /next <planète> → liste des bâtiments · /next <planète> <key> → direct · /next <planète> off
+      const s = await getState();
+      if (!args.length) return send("⏭ Sur quelle planète ?", chatId, { reply_markup: planetKeyboard(s) });
+      const last = args[args.length - 1].toLowerCase();
+      const isOff = last === "off" || last === "annule" || last === "annuler";
+      const known = buildChoices(s.planets[0]).map((c) => c.key.toLowerCase());
+      const isKey = known.includes(last);
+      const p = planet(s, args.slice(0, isOff || isKey ? -1 : undefined).join(" ") || args.join(" "));
+      if (isOff) { clearNext(p.id); return send(`⏭ ${p.name} : attente annulée.`, chatId); }
+      if (!isKey) return send(`⏭ ${p.name} — quelle construction ?`, chatId, { reply_markup: nextKeyboard(p) });
+      const c = buildChoices(p).find((x) => x.key.toLowerCase() === last)!;
+      if (c.locked) throw new Error(`${c.name} est verrouillé sur ${p.name}`);
+      setNext(p.id, c.key, c.name);
+      return send(`⏭ ${p.name} : ${c.name} niveau ${c.level + 1} mis en attente.\n${resStr(c.cost)} · ${fmtDur(c.durationMs)}\n` +
+        (p.buildQueue ? `Lancé dès la fin de ${p.buildQueue.key} (dans ${fmtDur(p.buildQueue.finishesAt - s.now)}).` : "La file est libre : lancement au prochain passage (< 1 min)."), chatId);
+    }
+    case "/nexts": case "/attente": return send(await withState(nextSummary), chatId);
     case "/plan": return send(await withState(planSummary), chatId);
     case "/batiments": case "/buildings": { need(args, 1, "/batiments <planète>"); return send(await withState((s) => buildingsSummary(planet(s, args[0]))), chatId); }
     case "/autobuild": {

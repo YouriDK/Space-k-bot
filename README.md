@@ -186,6 +186,14 @@ Règles (utilisateur, 21/09/2026) :
 ```
 Telegram : `/plan` (palier courant, prochain bâtiment, bâtiments sautés et pourquoi), `/batiments <planète>`, `/autobuild on|off`, `/autobuild <planète> on|off`.
 
+### 8b. `/next` — enchaîner une construction sans attendre
+Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémarrages), lancé **dès que la file se libère** : ni délai de grâce, ni priorités, ni flag — c'est un ordre manuel, prévu pour que la nuit ne soit pas perdue.
+- `/next` → liste des planètes en boutons (file en cours, ⏭ si un ordre attend) puis liste des bâtiments (niveau, coût, durée).
+- `/next <planète>` → directement la liste des bâtiments · `/next <planète> <key>` → mise en attente immédiate · `/next <planète> off` → annulation.
+- `/nexts` → ce qui est en attente sur chaque planète.
+- Ressources manquantes ou refus du jeu : l'ordre **reste en attente**, réessai chaque minute, un seul message d'alerte par motif.
+- Passe avant l'auto-construction : tant qu'un ordre `/next` attend, les priorités par paliers ne s'appliquent pas sur cette planète.
+
 ### 9. Capture de données
 - `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **confirmer `parseThreats` au 1er échantillon**.
 - `fleet-samples.jsonl` : chaque flotte vue (`ships`, `distance`, `fuel`, timings) → ajuster la formule de carburant et de distance.
