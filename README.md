@@ -133,6 +133,13 @@ sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de
 - **Discord** : chaque nouvelle cache est aussi postée sur un webhook de salon (`DISCORD_WEBHOOK_URL`, `discord.ts`) — pas de bot Discord, juste un POST. Rien d'autre n'y transite.
 - Les presets acceptent une cache pirate ou un convoi comme cible (le récap le dit, et avertit si le tier ne correspond pas au preset).
 
+### 4c. Récupération automatique (`salvage.ts`)
+Relevé toutes les 10 min (`SALVAGE_CHECK_MS`) : un `GET /galaxy/carte` (champs `debris` / `cargaison` par système), puis lecture des seuls systèmes concernés.
+- **Débris** (`/recycle on`) : mission `recycle` avec `coords.body = "debris"` [BUNDLE], **2 recycleurs** (`RECYCLERS_PER_FIELD`) dès que métal + cristal ≥ **40 000** (`DEBRIS_MIN`). Toute la galaxie, sans limite de distance.
+- **Cargaisons abandonnées** (`/recup on`) : mission `recuperation`, **15 PT + 10 chasseurs lourds** (`RECUP_*`). Respecte le quota journalier (`sys.recup.restantes` / `plafond`) et saute la cible si elle s'éteint (`expireA`) avant l'arrivée estimée.
+- Départ depuis la planète **la plus proche** qui possède les vaisseaux ; si la flotte n'est pas disponible ou qu'aucun slot n'est libre, **on n'envoie rien** (log, pas d'alerte). Pas de doublon : une cible déjà en route ou traitée dans l'heure est ignorée.
+- `/salvage` liste ce que le bot voit (débris, cargaisons, quota) sans rien envoyer.
+
 ### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
 15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps, **immédiatement** (pas de confirmation) ; récap ✅/❌ par planète.
 Pas assez de sondes → `floor(dispo / nb planètes)` par planète. Pas assez de slots → seules les N premières planètes.

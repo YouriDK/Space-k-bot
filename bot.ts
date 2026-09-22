@@ -14,6 +14,7 @@ import { parseThreats, threatDesc, threatLabel, threatenedPlanetIds, triggersSav
 import { notifyTick } from "./notify.ts";
 import { autobuildTick } from "./autobuild.ts";
 import { piratesTick } from "./pirates.ts";
+import { salvageTick } from "./salvage.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
 
@@ -57,7 +58,7 @@ async function doSave(s: State, p: Planet, threats: Threat[], recallAt: number, 
     return false;
   }
   if (!dest) { alert(`⚠️ ${p.name} : impact dans ${eta} mais aucune destination de repli`); return false; }
-  const cap = capacity(ships) * 0.9;
+  const cap = capacity(ships); // 100 % de la soute, arrondi à l'entier (une soute fractionnaire est refusée)
   const cargo = fillCargo(p.resources, cap);
   const what = `${p.name} → ${dest.name} : ${shipsStr(ships)} · ${resStr(cargo)} · ${threats.length} vague(s), rappel à +${Math.round((recallAt - s.now) / 1000)} s`;
   if (s.fleetSlots.used >= s.fleetSlots.total) { alert(`SAVE IMPOSSIBLE (aucun slot ${s.fleetSlots.used}/${s.fleetSlots.total}) ${what}`); saves.set(p.id, { dest: dest.id, recallAt, simulated: true, sentAt: s.now }); return true; }
@@ -267,6 +268,7 @@ export async function watch() {
       const threats = parseThreats(s);
       await fleetSaveTick(s, threats);
       await piratesTick(s).catch((e) => log("PIRATES KO", e.message));
+      await salvageTick(s).catch((e) => log("SALVAGE KO", e.message));
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }

@@ -12,6 +12,7 @@ import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
+import { salvageSummary } from "./salvage.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
 import { MISSIONS, type Mission, type Res, type State } from "./spacek-client.ts";
 
@@ -231,6 +232,9 @@ Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire
 /save on — arme le fleet-save : 10 s avant une sonde ou une attaque, toute la flotte + ressources décollent vers la planète voisine, rappel juste après
 /save off — mode observation (« j'AURAIS décollé »)
 /collect on|off — vide les colonies qui débordent vers Père
+/recycle on|off — envoie 2 recycleurs sur les champs de débris ≥ 40 000
+/recup on|off — envoie 15 PT + 10 chasseurs lourds sur les cargaisons abandonnées
+/salvage — débris et cargaisons visibles dans la galaxie
 /recall <fleetId> — rappelle une flotte (immédiat)
 /pause — coupe tous les automatismes · /resume — les restaure
 
@@ -343,7 +347,8 @@ async function handle(text: string, chatId: string) {
       }
       return send([...out, ...notes].join("\n\n"), chatId);
     }
-    case "/save": case "/supply_auto": case "/collect": {
+    case "/salvage": case "/recup_list": return send(await salvageSummary(await getState()), chatId);
+    case "/save": case "/supply_auto": case "/collect": case "/recycle": case "/recup": {
       need(args, 1, `${cmd} on|off`);
       const v = /^(on|1|true)$/i.test(args[0]);
       const key = (cmd === "/supply_auto" ? "supply" : cmd.slice(1)) as keyof Flags;
