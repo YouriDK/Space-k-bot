@@ -8,7 +8,16 @@ import { CARGO, alert, api, fleetResultStr, flags, fmt, fmtNum, fmtDur, log, num
 const CHECK_MS = num("SALVAGE_CHECK_MS", 10 * 60_000); // relevé galaxie
 const DEBRIS_MIN = num("DEBRIS_MIN", 40_000);          // métal + cristal minimum pour déranger les recycleurs
 const RECYCLERS = num("RECYCLERS_PER_FIELD", 2);
-const RECUP_SHIPS: Record<string, number> = { smallCargo: num("RECUP_SMALL_CARGO", 15), heavyFighter: num("RECUP_HEAVY_FIGHTER", 10) };
+// Cargaisons : on dimensionne la flotte sur le volume annoncé — 1 éclaireur pour 10 000 (sa soute).
+// RECUP_SMALL_CARGO ajoute éventuellement des PT fixes en plus (0 par défaut : les éclaireurs suffisent et vont plus vite).
+const RECUP_MARGIN = num("RECUP_MARGIN", 1);           // 1 = au plus juste, 1.2 = 20 % de marge
+const RECUP_MAX_PATHFINDER = num("RECUP_MAX_PATHFINDER", 50);
+const recupShips = (total: number): Record<string, number> => {
+  const cap = CARGO.pathfinder;                         // 10 000
+  const voulus = Math.max(1, Math.min(RECUP_MAX_PATHFINDER, Math.ceil((total * RECUP_MARGIN) / cap)));
+  const pt = num("RECUP_SMALL_CARGO", 0);
+  return { pathfinder: voulus, ...(pt > 0 ? { smallCargo: pt } : {}) };
+};
 
 let lastCheck = 0;
 const sent = new Map<string, number>(); // "recycle 12:7" → horodatage, pour ne pas renvoyer sur la même cible
@@ -69,10 +78,11 @@ export async function salvageTick(s: State) {
         const r = (sl as any).recup as { id: string; total: number; expireA: number };
         const quota = (sys as any).recup as { restantes: number; plafond: number; remiseA: number } | undefined;
         if (quota && quota.restantes <= 0) { log(`Cargaison ${fmt(target)} : quota épuisé (${quota.plafond}/jour, remise à zéro dans ${fmtDur(quota.remiseA - s.now)})`); continue; }
-        const src = sourceFor(s, RECUP_SHIPS, target);
-        const eta = src ? flightMs(s, src, target, RECUP_SHIPS) : null;
+        const ships = recupShips(r.total ?? 0);
+        const src = sourceFor(s, ships, target);
+        const eta = src ? flightMs(s, src, target, ships) : null;
         if (eta && r.expireA && s.now + eta * 1.1 > r.expireA) { log(`Cargaison ${fmt(target)} : s'éteint dans ${fmtDur(r.expireA - s.now)}, vol ~${fmtDur(eta)} → trop tard`); continue; }
-        await go(s, "recuperation", target, RECUP_SHIPS, `${fmt(target)} · ≈ ${fmtNum(r.total)} · s'éteint dans ${fmtDur(r.expireA - s.now)}`)
+        await go(s, "recuperation", target, ships, `${fmt(target)} · ≈ ${fmtNum(r.total)} → ${ships.pathfinder} éclaireurs · s'éteint dans ${fmtDur(r.expireA - s.now)}`)
           .catch((e) => alert(`❌ Récupération ${fmt(target)} : ${e.message}`));
       }
     }
@@ -94,13 +104,13 @@ export async function salvageSummary(s: State): Promise<string> {
       }
       if ((sl as any).recup) {
         const r = (sl as any).recup;
-        lines.push(`📦 ${fmt(t)} — cargaison ≈ ${fmtNum(r.total)} · s'éteint dans ${fmtDur(r.expireA - s.now)}`);
+        lines.push(`📦 ${fmt(t)} — cargaison ≈ ${fmtNum(r.total)} → ${recupShips(r.total ?? 0).pathfinder} éclaireurs · s'éteint dans ${fmtDur(r.expireA - s.now)}`);
       }
     }
   }
   const q = await api.galaxySystem(s.planets[0].coords.system).then((x: any) => x.recup).catch(() => null);
   return [
-    `Recyclage ${flags.recycle ? "ON" : "off"} (seuil ${fmtNum(DEBRIS_MIN)}, ${RECYCLERS} recycleurs) · Récupération ${flags.recup ? "ON" : "off"} (${Object.entries(RECUP_SHIPS).map(([k, n]) => `${n} ${k}`).join(" + ")})`,
+    `Recyclage ${flags.recycle ? "ON" : "off"} (seuil ${fmtNum(DEBRIS_MIN)}, ${RECYCLERS} recycleurs) · Récupération ${flags.recup ? "ON" : "off"} (1 éclaireur par ${fmtNum(CARGO.pathfinder)} de cargaison)`,
     q ? `Quota cargaisons : ${q.restantes}/${q.plafond} aujourd'hui` : "",
     ...(lines.length ? lines : ["Rien à récupérer dans la galaxie."]),
   ].filter(Boolean).join("\n");

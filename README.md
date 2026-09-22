@@ -136,7 +136,7 @@ sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de
 ### 4c. Récupération automatique (`salvage.ts`)
 Relevé toutes les 10 min (`SALVAGE_CHECK_MS`) : un `GET /galaxy/carte` (champs `debris` / `cargaison` par système), puis lecture des seuls systèmes concernés.
 - **Débris** (`/recycle on`) : mission `recycle` avec `coords.body = "debris"` [BUNDLE], **2 recycleurs** (`RECYCLERS_PER_FIELD`) dès que métal + cristal ≥ **40 000** (`DEBRIS_MIN`). Toute la galaxie, sans limite de distance.
-- **Cargaisons abandonnées** (`/recup on`) : mission `recuperation`, **15 PT + 10 chasseurs lourds** (`RECUP_*`). Respecte le quota journalier (`sys.recup.restantes` / `plafond`) et saute la cible si elle s'éteint (`expireA`) avant l'arrivée estimée.
+- **Cargaisons abandonnées** (`/recup on`) : mission `recuperation`, flotte **dimensionnée sur le volume annoncé** — 1 éclaireur (soute 10 000) par tranche de 10 000, ex. 40 000 → 4 éclaireurs, plafonné à `RECUP_MAX_PATHFINDER` (50). `RECUP_MARGIN` (1 par défaut) ajoute une marge, `RECUP_SMALL_CARGO` (0) des PT en plus. Respecte le quota journalier (`sys.recup.restantes` / `plafond`) et saute la cible si elle s'éteint (`expireA`) avant l'arrivée estimée.
 - Départ depuis la planète **la plus proche** qui possède les vaisseaux ; si la flotte n'est pas disponible ou qu'aucun slot n'est libre, **on n'envoie rien** (log, pas d'alerte). Pas de doublon : une cible déjà en route ou traitée dans l'heure est ignorée.
 - `/salvage` liste ce que le bot voit (débris, cargaisons, quota) sans rien envoyer.
 
