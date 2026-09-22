@@ -1,26 +1,40 @@
 {
   "defaults": {
-    "order": [
-      "robotFactory",
-      "shipyard",
-      "researchLab",
-      "solarPlant",
+    "objectifs": [
+      {
+        "key": "robotFactory",
+        "max": 12
+      },
+      {
+        "key": "researchLab",
+        "max": 10
+      },
+      {
+        "key": "shipyard",
+        "max": 8
+      },
+      {
+        "key": "metalMine",
+        "max": 20
+      },
+      {
+        "key": "crystalMine",
+        "max": 20
+      },
+      {
+        "key": "deuteriumSynthesizer",
+        "max": 20
+      },
+      {
+        "key": "missileSilo",
+        "max": 5
+      }
+    ],
+    "storageWhenFull": true,
+    "energyFirst": [
       "fusionPlant",
-      "crystalMine",
-      "deuteriumSynthesizer",
-      "metalMine",
-      "missileSilo",
-      "metalStorage",
-      "crystalStorage",
-      "deuteriumStorage"
+      "solarPlant"
     ],
-    "tiers": [
-      5,
-      7,
-      9,
-      10
-    ],
-    "continueAfterTiers": true,
     "graceMs": 120000
   },
   "pl_2w": {
@@ -33,9 +47,12 @@
     "enabled": false
   },
   "pl_4z8": {
-    "enabled": false
+    "enabled": true
   },
   "pl_7vb": {
-    "enabled": false
+    "enabled": true,
+    "energyFirst": [
+      "solarPlant"
+    ]
   }
 }

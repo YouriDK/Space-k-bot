@@ -167,24 +167,26 @@ Formats confirmés en live le 22/09 (`menaces`, `alertesVives`, `reports`, `arri
 - `[OBSERVATION]` : ce que le bot ferait si les flags étaient armés. ❌ erreurs (1 fois, puis toutes les 15 min max). 💓 heartbeat, 🚨 poll bloqué.
 Les ids déjà notifiés sont dans `seen.json` (pas de doublon après un restart pm2).
 
-### 8. Auto-construction (`autobuild`) — par paliers
-Règles (utilisateur, 21/09/2026) :
-- **Ordre** : robotFactory > shipyard > researchLab > solarPlant > fusionPlant > crystalMine > deuteriumSynthesizer > metalMine > missileSilo > metalStorage > crystalStorage > deuteriumStorage.
-- **Paliers** 5 → 7 → 9 → 10 : on parcourt la liste et on monte chaque bâtiment au palier courant ; quand tout est au palier, on passe au suivant. Après 10 : niveau par niveau (11, 12, …) dans le même ordre (`continueAfterTiers`).
-- Pas les ressources, ou énergie qui passerait en négatif → **on passe au suivant de la liste** (dans le même palier). Rien d'éligible au palier courant → on attend (pas de saut de palier).
-- `researchLab` est **sauté tant qu'une recherche tourne** (le serveur le refuse), et toute clé refusée par le serveur (400) est mise de côté **30 min** avec un message unique, puis on passe au bâtiment suivant.
-- **Délai de 2 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
-- Activable **par planète uniquement** (`enabled`, via `/autobuild <planète> on|off`) ; pas d'interrupteur global, `/pause` coupe tout. Au plus une décision par planète par minute, un seul `POST /build` par tick.
+### 8. Auto-construction — objectifs (règles du 22/09/2026)
+Ordre appliqué **par planète**, chaque bâtiment jusqu'à son objectif :
 
-`build-plan.json` (rechargé à chaud) :
-```json
-{
-  "defaults": { "order": ["robotFactory", "shipyard", "…"], "tiers": [5, 7, 9, 10], "continueAfterTiers": true, "graceMs": 120000 },
-  "pl_2w": { "enabled": false },
-  "pl_rn": { "enabled": true, "tiers": [5, 7] }
-}
-```
-Telegram : `/plan` (palier courant, prochain bâtiment, bâtiments sautés et pourquoi), `/batiments <planète>`, `/autobuild on|off`, `/autobuild <planète> on|off`.
+| Ordre | Bâtiment | Objectif |
+|---|---|---|
+| 1 | Fabrique de robots | 12 |
+| 2 | Laboratoire de recherche | 10 |
+| 3 | Chantier spatial | 8 |
+| 4 | Mine de métal | 20 |
+| 5 | Mine de cristal | 20 |
+| 6 | Synthétiseur de deutérium | 20 |
+| 7 | Silo de missiles | 5 |
+
+Trois règles transverses :
+- **Ressources insuffisantes → on passe au suivant** de la liste (jamais d'attente bloquante).
+- **Réservoir plein** (≥ 98 % de la capacité, la production se perd) : avant d'améliorer la mine concernée, on agrandit `metalStorage` / `crystalStorage` / `deuteriumStorage`. Pas d'objectif de niveau : seulement quand c'est nécessaire.
+- **Énergie** : si l'amélioration retenue ferait passer le solde en négatif, on construit d'abord une **centrale de fusion**, à défaut une **centrale solaire** (BetweenLands : solaire uniquement, la fusion n'y existe pas). Si aucune centrale n'est finançable, l'amélioration est écartée — on ne laisse jamais l'énergie plonger.
+
+Contraintes du jeu prises en compte : le **laboratoire** est intouchable pendant une recherche, le **chantier** pendant une production (`shipyardBusy`). Un bâtiment refusé par le jeu est écarté 30 min avec un seul message.
+Quand tous les objectifs d'une planète sont atteints, le bot **s'arrête** sur cette planète (`/plan` l'affiche) — les niveaux supérieurs restent à ta main via `/next`.
 
 ### 8b. `/next` — enchaîner une construction sans attendre
 Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémarrages), lancé **dès que la file se libère** : ni délai de grâce, ni priorités, ni flag — c'est un ordre manuel, prévu pour que la nuit ne soit pas perdue.
