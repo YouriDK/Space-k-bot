@@ -32,8 +32,15 @@ async function tg<T = any>(method: string, params: object): Promise<T> {
 // File d'envoi : 1 message/s, découpage > 4000 caractères
 const queue: { chatId: string; text: string; extra?: object }[] = [];
 function send(text: string, chatId = CHAT_ID, extra?: object) {
-  for (let i = 0; i < text.length; i += 4000) queue.push({ chatId, text: text.slice(i, i + 4000), extra: i === 0 ? extra : undefined });
-  if (!text) queue.push({ chatId, text: "(vide)" });
+  if (!text) return queue.push({ chatId, text: "(vide)" });
+  // Découpage > 4000 caractères sur une fin de ligne (pas au milieu d'un mot)
+  let rest = text, first = true;
+  while (rest.length) {
+    let cut = rest.length <= 4000 ? rest.length : rest.lastIndexOf("\n", 4000);
+    if (cut <= 0) cut = 4000;
+    queue.push({ chatId, text: rest.slice(0, cut), extra: first ? extra : undefined });
+    rest = rest.slice(cut).replace(/^\n+/, ""); first = false;
+  }
 }
 (async function sender() {
   for (;;) {
@@ -154,35 +161,81 @@ const need = (toks: string[], n: number, usage: string) => { if (toks.length < n
 
 // ---------- Commandes ----------
 // Commandes courtes (les tiennes) — attaques, scans et expéditions partent toujours de Père
-const HELP = `Mes commandes
-/flotte — mes vaisseaux (par planète + en vol)
-/joueur <nom> — ses planètes (coords), rang, puissance
+const helpText = () => `📖 COMMANDES SPACE-K BOT
+Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
+<planète> = pere · fils · oncle · cousin · bl (ou id pl_xx, ou coords 6:7)
 
-Raids (attendre l'allié ✔, cible vérifiée dans la galaxie)
+━━━━━━━━━━━━━━━━━━━━
+👁 LECTURE
+━━━━━━━━━━━━━━━━━━━━
+/status — ressources, slots, flottes, menaces, latence
+/flotte — mes vaisseaux par planète + flottes en vol
+/threats — menaces en approche
+/joueur <nom> — planètes, rang et puissance d'un joueur
+/plan — auto-construction : planètes actives, palier, prochain bâtiment
+/batiments <planète> — les 12 bâtiments : niveau, coût, durée
+/flags — état des automatismes
+
+━━━━━━━━━━━━━━━━━━━━
+⚔️ RAIDS (récap + ✅ Confirmer / ❌ Annuler)
+━━━━━━━━━━━━━━━━━━━━
+Attendre l'allié ✔ toujours coché. La cible doit exister dans la galaxie et ne pas être à toi.
+Ex. : /p0 under 12:9
+
 ${presetsHelp()}
 
-Scans (15 sondes sur chaque planète du joueur, en même temps)
-/scan_2003CP0 · /scan_987 · /scan_Thomas · /scan_aaa · /scan <nom> — 15 sondes/planète, part immédiatement
+━━━━━━━━━━━━━━━━━━━━
+🔍 SCANS (immédiats, ${process.env.SCAN_PROBES || 15} sondes par planète)
+━━━━━━━━━━━━━━━━━━━━
+/scan_2003CP0 · /scan_987 · /scan_Thomas · /scan_aaa
+/scan <nom> — n'importe quel joueur
+Pas assez de sondes → réparties à parts égales. Récap ✅ par planète.
 
-Expéditions (position 16, depuis Père)
-/explo opti <h> — 10 éclaireurs + 100 GT
-/explo 911 [h=2] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources (garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut)
+━━━━━━━━━━━━━━━━━━━━
+🧭 EXPÉDITIONS (6:16, récap + ✅)
+━━━━━━━━━━━━━━━━━━━━
+/explo opti <h> — 10 éclaireurs + 100 GT, durée <h>
+/explo 911 [h] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources, garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut (2 h par défaut)
+Refus clair si limite 24 h, simultané ou système saturé.
 
-Auto-construction
-/plan — priorités et prochain bâtiment par planète · /batiments <planète> — liste et coûts
-/autobuild <planète> on|off · /plan
+━━━━━━━━━━━━━━━━━━━━
+📦 RAVITAILLEMENT (immédiat)
+━━━━━━━━━━━━━━━━━━━━
+/supply <planète> <métal> <cristal> <deut> — en milliers
+Ex. : /supply fils 40 14 90 → 40 000 M, 14 000 C, 90 000 D
+PT d'abord (rapides), GT en complément dans une 2e flotte.
 
-/status · /threats · /recall <fleetId>
-/save on|off · /collect on|off · /pause · /resume
-/token <refresh_token> — renouveler le token Keycloak (tous les 7 j max)
+━━━━━━━━━━━━━━━━━━━━
+🏗 AUTO-CONSTRUCTION (par planète)
+━━━━━━━━━━━━━━━━━━━━
+/autobuild <planète> on — active la planète
+/autobuild <planète> off — désactive
+/autobuild <planète> — état
+/autobuild off — désactive toutes les planètes
+Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire > fusion > cristal > deut > métal > silo > hangars. Pas les sous ou énergie négative → suivant. 2 min de délai après chaque fin.
 
-/help full — toutes les commandes détaillées`;
+━━━━━━━━━━━━━━━━━━━━
+🛡 DÉFENSE AUTO
+━━━━━━━━━━━━━━━━━━━━
+/save on — arme le fleet-save : 10 s avant une sonde ou une attaque, toute la flotte + ressources décollent vers la planète voisine, rappel juste après
+/save off — mode observation (« j'AURAIS décollé »)
+/collect on|off — vide les colonies qui débordent vers Père
+/recall <fleetId> — rappelle une flotte (immédiat)
+/pause — coupe tous les automatismes · /resume — les restaure
+
+━━━━━━━━━━━━━━━━━━━━
+🔧 DIVERS
+━━━━━━━━━━━━━━━━━━━━
+/token <refresh_token> — renouvelle le token Keycloak (tous les 7 j max)
+/help full — commandes génériques (/send, /transport, /deploy, /spy, /build, /research, /ships, /cancel, /efficiency)
+
+🔔 Notifications automatiques : bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
 
 const HELP_FULL = `Lecture
 /status · /planets · /fleets · /threats · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
 
 Actions (confirmation ✅/❌)
-/p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>   (variantes : ${Object.keys(PRESETS.p1).join(", ")})
+/p0 · /p1 · /p2 <variante> <sys:pos>   (variantes : ${Object.entries(PRESETS).map(([g, v]) => `${g}: ${Object.keys(v).join("|")}`).join(" · ")})
 /scan_<joueur> · /scan <joueur>
 /explo opti <h> · /explo 911 [h]
 /send <planète> <mission> <sys:pos|planète> <k=n,k=n> [m=… c=… d=… speed=…]
@@ -213,7 +266,7 @@ async function handle(text: string, chatId: string) {
   };
 
   switch (cmd) {
-    case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : HELP, chatId);
+    case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : helpText(), chatId);
     case "/flotte": case "/flottes": return send(await withState(shipsSummary), chatId);
     case "/joueur": case "/player": {
       need(args, 1, "/joueur <nom>");

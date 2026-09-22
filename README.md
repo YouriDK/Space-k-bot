@@ -104,7 +104,7 @@ BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si u
 de la capacité, le surplus au-dessus de `COLLECT_KEEP` (50 %) part vers Père avec les transporteurs sur place (GT puis PT).
 Jamais depuis/vers une planète menacée, pas de doublon.
 
-### 4. Raids (`/p0`, `/p1`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
+### 4. Raids (`/p0`, `/p1`, `/p2`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
 | Commande | Composition |
 |---|---|
 | `/p0 under <sys:pos>` | 7 croiseurs + 10 GT |
@@ -120,6 +120,10 @@ Jamais depuis/vers une planète menacée, pas de doublon.
 
 Avant la confirmation, la cible est vérifiée par `GET /galaxy?system=N` : position 1–15, planète présente, pas à nous ;
 sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de la planète et son propriétaire.
+
+- `/p2 trio <sys:pos>` — 110 croiseurs + 40 GT + 10 éclaireurs + 2 VB
+- `/p2 under <sys:pos>` — 110 croiseurs + 40 GT + 20 éclaireurs + 2 VB
+- `/p2 over <sys:pos>` — 110 croiseurs + 40 GT + 30 éclaireurs + 10 VB
 
 ### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
 15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps, **immédiatement** (pas de confirmation) ; récap ✅/❌ par planète.

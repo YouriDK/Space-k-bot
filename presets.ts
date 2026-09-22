@@ -22,11 +22,16 @@ export const PRESETS: Record<string, Record<string, Preset>> = {
     // la seconde suit la série opti_* → nommée opti_trio.
     opti_trio:  { ships: { cruiser: 5, pathfinder: 32 }, rallier: true },
   },
+  p2: {
+    trio:  { ships: { cruiser: 110, largeCargo: 40, pathfinder: 10, battleship: 2 }, rallier: true },
+    under: { ships: { cruiser: 110, largeCargo: 40, pathfinder: 20, battleship: 2 }, rallier: true },
+    over:  { ships: { cruiser: 110, largeCargo: 40, pathfinder: 30, battleship: 10 }, rallier: true },
+  },
 };
 
 export const presetsHelp = () =>
-  Object.entries(PRESETS).map(([g, vs]) => Object.entries(vs).map(([v, p]) =>
-    `/${g} ${v} <sys:pos> — ${Object.entries(p.ships).map(([k, n]) => `${n} ${SHIP_FR[k] ?? k}`).join(" + ")}${p.rallier ? " · attendre l'allié ✔" : ""}`).join("\n")).join("\n");
+  Object.entries(PRESETS).map(([g, vs]) => [`▸ /${g}`, ...Object.entries(vs).map(([v, p]) =>
+    `   /${g} ${v} <sys:pos>\n      ${Object.entries(p.ships).map(([k, n]) => `${n} ${SHIP_FR[k] ?? k}`).join(" + ")}`)].join("\n")).join("\n\n");
 
 /** Vérifie la cible dans la galaxie (position 1–15, planète présente, pas à nous) puis prépare l'attaque. */
 export async function planPreset(s: State, group: string, variant: string, pos: string, speedPercent = 100): Promise<FleetPlan> {
