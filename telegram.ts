@@ -170,7 +170,7 @@ Expéditions (position 16, depuis Père)
 
 Auto-construction
 /plan — priorités et prochain bâtiment par planète · /batiments <planète> — liste et coûts
-/autobuild on|off · /autobuild <planète> on|off
+/autobuild <planète> on|off · /plan
 
 /status · /threats · /recall <fleetId>
 /save on|off · /collect on|off · /pause · /resume
@@ -194,7 +194,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /collect on|off · /autobuild on|off [planète] · /pause · /resume
+/save on|off · /collect on|off · /autobuild <planète> on|off · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
@@ -242,19 +242,22 @@ async function handle(text: string, chatId: string) {
     case "/plan": return send(await withState(planSummary), chatId);
     case "/batiments": case "/buildings": { need(args, 1, "/batiments <planète>"); return send(await withState((s) => buildingsSummary(planet(s, args[0]))), chatId); }
     case "/autobuild": {
-      // /autobuild on|off (global) · /autobuild <planète…> on|off · /autobuild <planète…> (état). Le nom peut contenir des espaces.
-      need(args, 1, "/autobuild on|off | /autobuild <planète> on|off");
+      // /autobuild <planète…> on|off · /autobuild <planète…> (état) · /autobuild off (désactive toutes les planètes). Pas d'interrupteur global.
+      need(args, 1, "/autobuild <planète> on|off");
       const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
       const asBool = (x: string) => /^(on|1|true)$/i.test(x);
-      if (args.length === 1 && isOnOff(args[0])) { const f = setFlag("autobuild", asBool(args[0])); return send(flagsStr(f), chatId); }
+      const s = await getState();
+      if (args.length === 1 && isOnOff(args[0])) {
+        if (asBool(args[0])) return send("L'auto-construction s'active par planète : /autobuild cousin on, /autobuild bl on…\n\n" + planSummary(s), chatId);
+        for (const p of s.planets) setPlanetEnabled(p.id, false, s);
+        return send("Auto-construction désactivée sur toutes les planètes.\n\n" + planSummary(s), chatId);
+      }
       const last = args[args.length - 1];
       const nameParts = isOnOff(last) ? args.slice(0, -1) : args;
-      const s = await getState();
       const p = planet(s, nameParts.join(" "));
-      if (!isOnOff(last)) return send(`Auto-construction ${p.name} : ${planetPlan(loadPlan(s), p.id).enabled ? "on" : "off"} · global ${getFlags().autobuild ? "ON" : "OFF"}\n${planSummary(s)}`, chatId);
-      const pp = setPlanetEnabled(p.id, asBool(last), s);
-      const warn = pp.enabled && !getFlags().autobuild ? `\n\n⚠️ RIEN NE SE LANCERA : l'interrupteur global est OFF. Tape  /autobuild on  pour démarrer.` : "";
-      return send(`Auto-construction ${p.name} : ${pp.enabled ? "on" : "off"}${warn}\n\n${planSummary(s)}`, chatId);
+      if (isOnOff(last)) setPlanetEnabled(p.id, asBool(last), s);
+      const on = planetPlan(loadPlan(s), p.id).enabled;
+      return send(`Auto-construction ${p.name} : ${on ? "ON ✅" : "off"}${on && !getFlags().autobuild ? " (⏸ tout est en pause → /resume)" : ""}\n\n${planSummary(s)}`, chatId);
     }
     case "/status": return send(await withState(statusSummary), chatId);
     case "/planets": return send(await withState(planetsSummary), chatId);

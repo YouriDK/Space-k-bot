@@ -30,7 +30,8 @@ export const SHIP_FR: Record<string, string> = {
 export type Flags = { save: boolean; supply: boolean; collect: boolean; autobuild: boolean };
 const FLAGS_FILE = "flags.json";
 export const flags: Flags = {
-  save: bool("SAVE_ARMED"), supply: bool("SUPPLY_ENABLED"), collect: bool("COLLECT_ENABLED"), autobuild: bool("AUTOBUILD_ENABLED"),
+  // autobuild : pas d'interrupteur global, l'activation est PAR PLANÈTE (build-plan.json) ; ce flag ne sert qu'à /pause /resume
+  save: bool("SAVE_ARMED"), supply: bool("SUPPLY_ENABLED"), collect: bool("COLLECT_ENABLED"), autobuild: bool("AUTOBUILD_ENABLED", true),
 };
 let pausedFrom: Flags | null = null;
 try {
@@ -49,7 +50,7 @@ export function setFlag(k: keyof Flags, v: boolean) { flags[k] = v; log("FLAG", 
 export function pause() { if (!pausedFrom) pausedFrom = { ...flags }; (Object.keys(flags) as (keyof Flags)[]).forEach((k) => (flags[k] = false)); log("PAUSE"); persistFlags(); return getFlags(); }
 export function resume() { if (pausedFrom) Object.assign(flags, pausedFrom); pausedFrom = null; log("RESUME", flags); persistFlags(); return getFlags(); }
 export const flagsStr = (f: Flags) =>
-  `save ${f.save ? "ARMÉ 🔴" : "observation"} · supply ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`;
+  `save ${f.save ? "ARMÉ 🔴" : "observation"} · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
 
 // ---------- Outils ----------
 export const api = new SpaceK();

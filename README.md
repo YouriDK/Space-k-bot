@@ -147,7 +147,7 @@ Règles (utilisateur, 21/09/2026) :
 - **Paliers** 5 → 7 → 9 → 10 : on parcourt la liste et on monte chaque bâtiment au palier courant ; quand tout est au palier, on passe au suivant. Après 10 : niveau par niveau (11, 12, …) dans le même ordre (`continueAfterTiers`).
 - Pas les ressources, ou énergie qui passerait en négatif → **on passe au suivant de la liste** (dans le même palier). Rien d'éligible au palier courant → on attend (pas de saut de palier).
 - **Délai de 2 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
-- Activable **par planète** (`enabled`) + flag global `AUTOBUILD_ENABLED` / `/autobuild on|off`. Au plus une décision par planète par minute, un seul `POST /build` par tick.
+- Activable **par planète uniquement** (`enabled`, via `/autobuild <planète> on|off`) ; pas d'interrupteur global, `/pause` coupe tout. Au plus une décision par planète par minute, un seul `POST /build` par tick.
 
 `build-plan.json` (rechargé à chaud) :
 ```json

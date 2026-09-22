@@ -1,6 +1,6 @@
 // Auto-construction par PALIERS (règles utilisateur du 21/09) : quand la file d'une planète est vide depuis ≥ 2 min,
 // parcourir la liste ordonnée et monter chaque bâtiment au palier courant (5, puis 7, 9, 10, puis niveau par niveau) ;
-// pas les ressources ou énergie négative → on passe au suivant de la liste. Flag global `autobuild` + `enabled` par planète.
+// pas les ressources ou énergie négative → on passe au suivant de la liste. Activation PAR PLANÈTE uniquement (`enabled`) ; /pause coupe tout.
 // build-plan.json est rechargé dès qu'il change sur le disque (édition à la main sans redémarrer) :
 //   { "defaults": { "order": [...], "tiers": [5,7,9,10], "continueAfterTiers": true, "graceMs": 120000 },
 //     "pl_2w": { "enabled": false }, "pl_rn": { "enabled": true, "tiers": [5,7] }, ... }
@@ -104,7 +104,7 @@ export async function autobuildTick(s: State) {
     if (p.buildQueue) queueEmptySince.delete(p.id);
     else queueEmptySince.set(p.id, queueEmptySince.get(p.id) ?? s.now); // 1re fois vue vide (au démarrage : délai complet)
   }
-  if (!flags.autobuild) return;
+  if (!flags.autobuild) return; // seulement via /pause
   for (const p of s.planets) {
     const pp = planetPlan(pl, p.id);
     if (!pp.enabled || p.buildQueue) continue;
@@ -128,7 +128,7 @@ export function planSummary(s: State): string {
   const pl = loadPlan(s);
   const d = planetPlan(pl, "__defaults__");
   return [
-    `Auto-construction : ${flags.autobuild ? "ON" : "OFF"} (global) · paliers ${(d.tiers ?? []).join(" → ")}${d.continueAfterTiers !== false ? " puis +1" : ""} · délai ${fmtDur(d.graceMs ?? DEFAULT_GRACE_MS)} après chaque fin`,
+    `Auto-construction${flags.autobuild ? "" : " ⏸ EN PAUSE (/resume)"} : ${s.planets.filter((p) => planetPlan(pl, p.id).enabled).map((p) => p.name).join(", ") || "aucune planète activée"} · paliers ${(d.tiers ?? []).join(" → ")}${d.continueAfterTiers !== false ? " puis +1" : ""} · délai ${fmtDur(d.graceMs ?? DEFAULT_GRACE_MS)} après chaque fin`,
     `Ordre : ${(d.order ?? []).join(" > ")}`,
     ...s.planets.map((p) => {
       const pp = planetPlan(pl, p.id);
