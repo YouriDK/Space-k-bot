@@ -13,7 +13,7 @@ import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
 import { salvageSummary } from "./salvage.ts";
-import { buildChoices, clearNext, getNext, nextSummary, setNext } from "./nextbuild.ts";
+import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
 import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
 
@@ -71,6 +71,19 @@ async function onCallback(cq: any) {
   const done = (text: string) => tg("answerCallbackQuery", { callback_query_id: cq.id, text: text.slice(0, 200) }).catch(() => {});
   if (chatId !== CHAT_ID) return done("Non autorisé");
   // /next : choix de la planète puis du bâtiment (pas de ✅ : le choix dans la liste vaut validation)
+  if (verb === "nxr" || (verb === "nxt" && id === "__res__")) {
+    const s = await getState();
+    if (verb === "nxt") { await edit(chatId, cq.message?.message_id, "🔬 Quelle recherche lancer dès que le labo se libère ?", researchKeyboard(s)); return done(""); }
+    const c = researchChoices(s).find((x) => x.key === id);
+    if (!c) return done("Recherche inconnue");
+    const lab = bestLab(s);
+    setNextResearch(c.key, c.name, lab.id);
+    const rq = s.player.researchQueue;
+    await edit(chatId, cq.message?.message_id,
+      `🔬 ${c.name} niveau ${c.level + 1} mise en attente (labo de ${lab.name}).\n${resStr(c.cost)} · ${fmtDur(c.durationMs)}\n` +
+      (rq ? `Lancée dès la fin de ${rq.key} niv. ${rq.targetLevel} (dans ${fmtDur(rq.finishesAt - s.now)}).` : "Le labo est libre : lancement au prochain passage (< 1 min)."));
+    return done("Mise en attente");
+  }
   if (verb === "nxt" || verb === "nxb") {
     const s = await getState();
     const pl = s.planets.find((x) => x.id === id);
@@ -102,9 +115,19 @@ const edit = (chatId: string, messageId: number | undefined, text: string, marku
     : Promise.resolve(send(text, chatId, markup ? { reply_markup: markup } : undefined));
 /** Clavier : une planète par ligne. */
 const planetKeyboard = (s: State) => ({
-  inline_keyboard: s.planets.map((p) => [{
+  inline_keyboard: [[{
+    text: `🔬 Recherche${s.player.researchQueue ? ` (en cours : ${fmtDur(s.player.researchQueue.finishesAt - s.now)})` : " · labo libre"}${getNextResearch() ? " ⏭" : ""}`,
+    callback_data: "nxt:__res__",
+  }], ...s.planets.map((p) => [{
     text: `${p.name}${p.buildQueue ? ` 🏗 ${fmtDur(p.buildQueue.finishesAt - s.now)}` : " · libre"}${getNext(p.id) ? " ⏭" : ""}`,
     callback_data: `nxt:${p.id}`,
+  }])],
+});
+/** Clavier : les recherches disponibles. */
+const researchKeyboard = (s: State) => ({
+  inline_keyboard: researchChoices(s).filter((c) => !c.locked).map((c) => [{
+    text: `${c.name} ${c.level} → ${c.level + 1} · ${Math.round((c.cost.metal + c.cost.crystal + c.cost.deuterium) / 1000)}k · ${fmtDur(c.durationMs)}`,
+    callback_data: `nxr:${c.key}`,
   }]),
 });
 /** Clavier : les bâtiments constructibles d'une planète (verrouillés exclus). */
@@ -222,6 +245,7 @@ Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
 /pirates — caches pirates T0/T1/T2 connues, avec le preset conseillé
 /joueur <nom> — planètes, rang et puissance d'un joueur
 /next — mettre une construction en attente : elle part dès que la file se libère (même la nuit)
+/next labo <recherche> — idem pour la recherche (une seule à la fois)
 /nexts — ce qui est en attente sur chaque planète
 /plan — auto-construction : planètes actives, palier, prochain bâtiment
 /batiments <planète> — les 12 bâtiments : niveau, coût, durée
@@ -352,6 +376,19 @@ async function handle(text: string, chatId: string) {
       if (!args.length) return send("⏭ Sur quelle planète ?", chatId, { reply_markup: planetKeyboard(s) });
       const last = args[args.length - 1].toLowerCase();
       const isOff = last === "off" || last === "annule" || last === "annuler";
+      // /next labo|recherche [<key>|off]
+      if (/^(labo|laboratoire|recherche|research)$/i.test(args[0])) {
+        if (args.length === 1) return send("🔬 Quelle recherche ?", chatId, { reply_markup: researchKeyboard(s) });
+        if (isOff) { clearNextResearch(); return send("🔬 Recherche en attente annulée.", chatId); }
+        const c = researchChoices(s).find((x) => x.key.toLowerCase() === last || x.name.toLowerCase() === args.slice(1).join(" ").toLowerCase());
+        if (!c) throw new Error(`Recherche inconnue : ${args.slice(1).join(" ")} (${researchChoices(s).map((x) => x.key).join(", ")})`);
+        if (c.locked) throw new Error(`${c.name} est verrouillée`);
+        const lab = bestLab(s);
+        setNextResearch(c.key, c.name, lab.id);
+        const rq = s.player.researchQueue;
+        return send(`🔬 ${c.name} niveau ${c.level + 1} mise en attente (labo de ${lab.name}).\n${resStr(c.cost)} · ${fmtDur(c.durationMs)}\n` +
+          (rq ? `Lancée dès la fin de ${rq.key} niv. ${rq.targetLevel} (dans ${fmtDur(rq.finishesAt - s.now)}).` : "Le labo est libre : lancement au prochain passage (< 1 min)."), chatId);
+      }
       const known = buildChoices(s.planets[0]).map((c) => c.key.toLowerCase());
       const isKey = known.includes(last);
       const p = planet(s, args.slice(0, isOff || isKey ? -1 : undefined).join(" ") || args.join(" "));

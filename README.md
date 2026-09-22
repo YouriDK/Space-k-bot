@@ -190,7 +190,8 @@ Telegram : `/plan` (palier courant, prochain bâtiment, bâtiments sautés et po
 Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémarrages), lancé **dès que la file se libère** : ni délai de grâce, ni priorités, ni flag — c'est un ordre manuel, prévu pour que la nuit ne soit pas perdue.
 - `/next` → liste des planètes en boutons (file en cours, ⏭ si un ordre attend) puis liste des bâtiments (niveau, coût, durée).
 - `/next <planète>` → directement la liste des bâtiments · `/next <planète> <key>` → mise en attente immédiate · `/next <planète> off` → annulation.
-- `/nexts` → ce qui est en attente sur chaque planète.
+- `/next labo` → liste des 14 recherches en boutons · `/next labo <key>` → mise en attente · `/next labo off` → annulation. Une seule recherche à la fois (contrainte du jeu), lancée depuis le **meilleur laboratoire** (`POST /research {planetId, key}`).
+- `/nexts` → ce qui est en attente : recherche + chaque planète.
 - Ressources manquantes ou refus du jeu : l'ordre **reste en attente**, réessai chaque minute, un seul message d'alerte par motif.
 - Passe avant l'auto-construction : tant qu'un ordre `/next` attend, les priorités par paliers ne s'appliquent pas sur cette planète.
 
