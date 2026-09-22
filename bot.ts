@@ -7,10 +7,10 @@
 // le bot calcule, logue et notifie ce qu'il ferait, mais n'émet aucun POST automatique.
 import type { Coords, Fleet, Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, fillCargo, flags, fmt, getFlags, getHealth, getState,
-  log, num, recordError, resStr, roundRes, same, shipsStr, sleep, xy,
+  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, etaStr, fillCargo, flags, fleetResultStr, fmt, getFlags,
+  getHealth, getState, log, num, recordError, resStr, roundRes, same, sendFleetFuelSafe, shipsStr, sleep, xy,
 } from "./core.ts";
-import { parseThreats, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
+import { parseThreats, threatDesc, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
 import { notifyTick } from "./notify.ts";
 import { autobuildTick } from "./autobuild.ts";
 import { piratesTick } from "./pirates.ts";
@@ -38,6 +38,7 @@ const RECALL_AFTER_MS = num("RECALL_AFTER_MS", 1_500); // rappel X ms après le 
 type SaveState = { dest: string; fleetId?: string; recallAt: number; simulated: boolean; sentAt: number };
 const saves = new Map<string, SaveState>();     // planetId → save en cours
 const announced = new Set<string>();            // menaces déjà notifiées
+const noSave = new Map<string, string>();       // planetId → vagues pour lesquelles il n'y avait rien à sauver
 
 /** Destination : la planète la plus proche non menacée si possible, sinon la plus proche (être en vol suffit). */
 function pickDest(s: State, p: Planet, threatened: Set<string>): Planet | undefined {
@@ -46,18 +47,27 @@ function pickDest(s: State, p: Planet, threatened: Set<string>): Planet | undefi
   return others.find((x) => !threatened.has(x.id)) ?? others[0];
 }
 
-async function doSave(s: State, p: Planet, threats: Threat[], recallAt: number, threatened: Set<string>) {
+/** Renvoie false si aucun décollage n'a été enregistré (rien à sauver) : pas de rappel à annoncer ensuite. */
+async function doSave(s: State, p: Planet, threats: Threat[], recallAt: number, threatened: Set<string>): Promise<boolean> {
   const ships = Object.fromEntries(Object.entries(p.ships).filter(([k, n]) => n > 0 && !NEVER_FLY.has(k)));
   const dest = pickDest(s, p, threatened);
-  if (!Object.keys(ships).length || !dest) { log("Rien à sauver sur", p.name); saves.set(p.id, { dest: dest?.id ?? "", recallAt, simulated: true, sentAt: s.now }); return; }
-  const cargo = fillCargo(p.resources, capacity(ships) * 0.9);
+  const eta = etaStr(Math.min(...threats.map((t) => t.arrivesAt)) - s.now);
+  if (!Object.keys(ships).length) {
+    alert(`⚠️ ${p.name} : impact dans ${eta} mais AUCUN vaisseau sur place — rien à faire décoller (les ressources ne peuvent pas être évacuées sans transporteur)`);
+    return false;
+  }
+  if (!dest) { alert(`⚠️ ${p.name} : impact dans ${eta} mais aucune destination de repli`); return false; }
+  const cap = capacity(ships) * 0.9;
+  const cargo = fillCargo(p.resources, cap);
   const what = `${p.name} → ${dest.name} : ${shipsStr(ships)} · ${resStr(cargo)} · ${threats.length} vague(s), rappel à +${Math.round((recallAt - s.now) / 1000)} s`;
-  if (s.fleetSlots.used >= s.fleetSlots.total) { alert(`SAVE IMPOSSIBLE (aucun slot ${s.fleetSlots.used}/${s.fleetSlots.total}) ${what}`); saves.set(p.id, { dest: dest.id, recallAt, simulated: true, sentAt: s.now }); return; }
-  if (!flags.save) { alert(`[OBSERVATION] j'AURAIS décollé : ${what}`); saves.set(p.id, { dest: dest.id, recallAt, simulated: true, sentAt: s.now }); return; }
-  const r: any = await api.sendFleet({ planetId: p.id, mission: "deploy", coords: xy(dest.coords), ships, cargo });
-  const fleetId = r?.fleetId ?? r?.id ?? r?.fleet?.id; // réponse du POST inconnue [DÉDUIT]
-  saves.set(p.id, { dest: dest.id, fleetId, recallAt, simulated: false, sentAt: s.now });
-  alert(`SAVE ${what}`, fleetId ? `fleet ${fleetId}` : r);
+  if (s.fleetSlots.used >= s.fleetSlots.total) { alert(`SAVE IMPOSSIBLE (aucun slot ${s.fleetSlots.used}/${s.fleetSlots.total}) ${what}`); saves.set(p.id, { dest: dest.id, recallAt, simulated: true, sentAt: s.now }); return true; }
+  if (!flags.save) { alert(`[OBSERVATION] j'AURAIS décollé : ${what}`); saves.set(p.id, { dest: dest.id, recallAt, simulated: true, sentAt: s.now }); return true; }
+  const { res, note } = await sendFleetFuelSafe(
+    { planetId: p.id, mission: "deploy", coords: xy(dest.coords), ships, cargo, speedPercent: 100 },
+    p.resources, cap, new Set(s.fleets.map((f) => f.id)));
+  saves.set(p.id, { dest: dest.id, fleetId: res.fleetId, recallAt, simulated: false, sentAt: s.now });
+  alert(`SAVE ${what}${note ? `\n${note}` : ""}\n${fleetResultStr(res)}`);
+  return true;
 }
 
 async function doRecall(s: State, p: Planet, st: SaveState) {
@@ -70,7 +80,8 @@ async function doRecall(s: State, p: Planet, st: SaveState) {
     : s.fleets.filter((f) => f.origin?.planetId === p.id && f.mission === "deploy" && f.phase === "outbound" && (f.departsAt ?? 0) >= st.sentAt - 5_000)
         .sort((a, b) => (b.departsAt ?? 0) - (a.departsAt ?? 0))[0];
   if (!mine) { alert(`Flotte de ${p.name} introuvable en vol (déjà posée sur la destination ?) → la ramener avec /deploy`); return; }
-  alert(`RECALL ${p.name}`, mine.id, await api.recall(mine.id));
+  await api.recall(mine.id); // la réponse est l'état complet : on ne l'affiche pas
+  alert(`RECALL ${p.name} · flotte ${mine.id} rappelée`);
 }
 
 async function fleetSaveTick(s: State, threats: Threat[]) {
@@ -78,8 +89,7 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
   for (const t of threats) {
     if (announced.has(t.id)) continue;
     announced.add(t.id);
-    const p = s.planets.find((x) => same(x.coords, t.target));
-    alert(`${threatLabel(t)}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? t.cibleNom ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`);
+    alert(threatDesc(t, s));
   }
   const threatened = threatenedPlanetIds(s, threats);
   for (const p of s.planets) {
@@ -90,8 +100,12 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
       if (!st && mine.every((t) => t.arrivesAt <= s.now)) continue;
       const saveAt = Math.min(...mine.map((t) => t.arrivesAt)) - SAVE_BEFORE_MS;
       const recallAt = Math.max(...mine.map((t) => t.arrivesAt)) + RECALL_AFTER_MS;
+      const key = mine.map((t) => t.id).sort().join(",");
       if (st) { if (recallAt > st.recallAt) { st.recallAt = recallAt; log("Nouvelle vague sur", p.name, "→ rappel repoussé"); } }
-      else if (s.now >= saveAt) await doSave(s, p, mine, recallAt, threatened).catch((e) => alert("SAVE KO", p.name, e.message));
+      else if (s.now >= saveAt && noSave.get(p.id) !== key) {
+        const done = await doSave(s, p, mine, recallAt, threatened).catch((e) => { alert(`SAVE KO ${p.name} : ${e.message}`); return true; });
+        if (!done) noSave.set(p.id, key); // rien à sauver : on ne réessaie pas à chaque poll
+      }
     } else if (st && s.now >= st.recallAt) {
       await doRecall(s, p, st).catch((e) => alert("RECALL KO", p.name, e.message));
     }
@@ -123,7 +137,9 @@ async function supply(s: State, threatened: Set<string>) {
     if (s.fleetSlots.used >= s.fleetSlots.total) { log("SUPPLY : aucun slot libre"); return; }
     const what = `Père → ${p.name} : ${lc} GT · ${resStr(cargo)}`;
     if (!flags.supply) { log(`[OBSERVATION] SUPPLY j'aurais envoyé ${what}`); continue; }
-    alert(`SUPPLY ${what}`, await api.sendFleet({ planetId: PERE, mission: "transport", coords: xy(p.coords), ships: { largeCargo: lc }, cargo }));
+    const sup = await sendFleetFuelSafe({ planetId: PERE, mission: "transport", coords: xy(p.coords), ships: { largeCargo: lc }, cargo, speedPercent: 100 },
+      pere.resources, lc * CARGO.largeCargo, new Set(s.fleets.map((f) => f.id)));
+    alert(`SUPPLY ${what}${sup.note ? `\n${sup.note}` : ""}\n${fleetResultStr(sup.res)}`);
     pere.ships.largeCargo -= lc; s.fleetSlots.used++;
   }
 }
@@ -154,7 +170,9 @@ async function collect(s: State, threatened: Set<string>) {
     if (s.fleetSlots.used >= s.fleetSlots.total) { log("COLLECT : aucun slot libre"); return; }
     const what = `${p.name} → Père : ${shipsStr(ships)} · ${resStr(cargo)}`;
     if (!flags.collect) { log(`[OBSERVATION] COLLECT j'aurais envoyé ${what}`); continue; }
-    alert(`COLLECT ${what}`, await api.sendFleet({ planetId: p.id, mission: "transport", coords: xy(pere.coords), ships, cargo }));
+    const col = await sendFleetFuelSafe({ planetId: p.id, mission: "transport", coords: xy(pere.coords), ships, cargo, speedPercent: 100 },
+      p.resources, cap, new Set(s.fleets.map((f) => f.id)));
+    alert(`COLLECT ${what}${col.note ? `\n${col.note}` : ""}\n${fleetResultStr(col.res)}`);
     s.fleetSlots.used++;
   }
 }
@@ -213,10 +231,7 @@ export function fleetsSummary(s: State): string {
 export function threatsSummary(s: State): string {
   const ts = parseThreats(s);
   if (!ts.length) return "Aucune menace.";
-  return ts.map((t) => {
-    const p = s.planets.find((x) => same(x.coords, t.target));
-    return `• ${threatLabel(t)}${t.attaquant ? ` de ${t.attaquant}` : ""} sur ${p?.name ?? fmt(t.target)} — impact dans ${Math.round((t.arrivesAt - s.now) / 1000)} s`;
-  }).join("\n");
+  return ts.map((t) => `• ${threatDesc(t, s)}`).join("\n");
 }
 
 /** Prochain réveil : le poll normal (avec jitter), ou plus tôt si une échéance (décollage / rappel) tombe avant.

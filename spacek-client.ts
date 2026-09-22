@@ -207,8 +207,12 @@ export class SpaceK {
     let json: any = text;
     try { json = JSON.parse(text); } catch { /* 401 = page HTML */ }
     if (body) {
-      // Réponses des POST inconnues → on capture tout pour documenter
-      try { appendFileSync(POST_SAMPLES, JSON.stringify({ at: Date.now(), path, body, status: r.status, response: typeof json === "string" ? json.slice(0, 500) : json }) + "\n"); } catch { /* disque plein ? on ignore */ }
+      // [TESTÉ 22/09] un POST réussi renvoie l'ÉTAT COMPLET : on ne garde que les clés (sinon le disque du téléphone se remplit).
+      // Les erreurs, elles, sont conservées en entier (c'est là qu'est l'information).
+      const resume = r.ok
+        ? { ok: true, keys: json && typeof json === "object" ? Object.keys(json).slice(0, 12) : String(json).slice(0, 200) }
+        : { ok: false, error: json && typeof json === "object" ? json.error ?? json : String(json).slice(0, 500) };
+      try { appendFileSync(POST_SAMPLES, JSON.stringify({ at: Date.now(), path, body, status: r.status, ...resume }) + "\n"); } catch { /* disque plein ? on ignore */ }
     }
     if (!r.ok) throw new Error(`${path} ${r.status}: ${text.slice(0, 200)}`);
     return json as T;

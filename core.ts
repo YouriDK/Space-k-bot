@@ -1,7 +1,7 @@
 // Noyau partagé par tous les modules (bot, presets, scan, expedition, notify, autobuild, telegram) :
 // client API, flags, log/notification, santé, helpers de flotte. Aucune logique de boucle ici.
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { SpaceK, type Coords, type Mission, type Res, type State, planetByName } from "./spacek-client.ts";
+import { SpaceK, type Coords, type Fleet, type Mission, type Res, type State, planetByName } from "./spacek-client.ts";
 
 export const PERE = "pl_2w";
 
@@ -67,6 +67,14 @@ export const resStr = (r: Res) => `M ${r.metal} · C ${r.crystal} · D ${r.deute
 export const roundRes = (r: Res): Res => ({ metal: Math.floor(r.metal), crystal: Math.floor(r.crystal), deuterium: Math.floor(r.deuterium) });
 export const fmtNum = (n: number) => Math.round(n).toLocaleString("fr-FR");
 export const fmtDur = (ms: number) => { const m = Math.round(ms / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`; };
+/** Compte à rebours lisible, précis à la seconde (impacts, arrivées). */
+export const etaStr = (ms: number) => {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  if (sec < 60) return `${sec} s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m} min ${String(sec % 60).padStart(2, "0")}`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`;
+};
 export function appendJsonl(file: string, obj: object) { try { appendFileSync(file, JSON.stringify(obj) + "\n"); } catch (e: any) { log("jsonl KO", file, e.message); } }
 export function parseCoords(pos: string): Coords {
   const m = pos.match(/^(\d+):(\d+)$/);
@@ -133,8 +141,49 @@ export function prepareFleet(s: State, o: {
   ].join("\n");
   return { payload, summary };
 }
-export async function sendFleet(plan: FleetPlan) {
-  const r = await api.sendFleet(plan.payload);
-  log("FLEET", plan.payload.mission, plan.payload.planetId, "→", fmt(plan.payload.coords), r);
-  return r;
+// ⚠️ [TESTÉ 22/09] tout POST qui réussit renvoie l'ÉTAT COMPLET du jeu (mêmes clés que /state) :
+// on n'en garde que l'utile (flotte créée) et on ne l'affiche JAMAIS tel quel.
+export type FleetResult = { fleetId?: string; arrivesAt?: number; returnsAt?: number; ships: Record<string, number>; state: State };
+
+/** Retrouve la flotte créée dans l'état renvoyé par le POST (par id inédit, sinon par mission + origine + cible). */
+function newFleetOf(state: any, payload: FleetPayload, prevIds?: Set<string>): Fleet | undefined {
+  const fleets: Fleet[] = Array.isArray(state?.fleets) ? state.fleets : [];
+  const fresh = prevIds ? fleets.filter((f) => !prevIds.has(f.id)) : fleets;
+  const matching = fresh.filter((f) =>
+    f.mission === payload.mission
+    && (f.origin?.planetId ? f.origin.planetId === payload.planetId : true)
+    && (f.target?.coords ? same(f.target.coords, payload.coords) : true));
+  const newest = (a: Fleet[]) => [...a].sort((x, y) => (y.departsAt ?? 0) - (x.departsAt ?? 0))[0];
+  return newest(matching) ?? (prevIds && fresh.length === 1 ? fresh[0] : undefined);
+}
+
+export async function postFleet(payload: FleetPayload, prevIds?: Set<string>): Promise<FleetResult> {
+  const state: any = await api.sendFleet(payload);
+  const f = newFleetOf(state, payload, prevIds);
+  const now = state?.now ?? Date.now();
+  log("FLEET", payload.mission, payload.planetId, "→", fmt(payload.coords), f?.id ?? "(id inconnu)",
+    f?.arrivesAt ? `arrivée dans ${etaStr(f.arrivesAt - now)}` : "");
+  return { fleetId: f?.id, arrivesAt: f?.arrivesAt, returnsAt: f?.returnsAt, ships: payload.ships, state };
+}
+export const fleetResultStr = (r: FleetResult) => {
+  const now = (r.state as any)?.now ?? Date.now();
+  return `flotte ${r.fleetId ?? "(id inconnu)"}${r.arrivesAt ? ` · arrivée dans ${etaStr(r.arrivesAt - now)}` : ""}${r.returnsAt ? ` · retour dans ${etaStr(r.returnsAt - now)}` : ""}`;
+};
+export const sendFleet = (plan: FleetPlan, prevIds?: Set<string>) => postFleet(plan.payload, prevIds);
+
+/** Envoi automatique avec rattrapage carburant : « Deutérium insuffisant : N nécessaires » [TESTÉ 22/09]
+ *  → on relaisse N × 1,2 de deutérium sur place et on réessaie UNE fois. */
+export async function sendFleetFuelSafe(payload: FleetPayload, resources: Res, cargoCap: number, prevIds?: Set<string>): Promise<{ res: FleetResult; note?: string }> {
+  try { return { res: await postFleet(payload, prevIds) }; }
+  catch (e: any) {
+    const m = String(e?.message ?? "").match(/Deut[eé]rium insuffisant\s*:\s*(\d+)/i);
+    if (!m) throw e;
+    const besoin = Number(m[1]);
+    const keep = Math.ceil(besoin * 1.2);
+    appendJsonl("fleet-samples.jsonl", { kind: "fuel", at: Date.now(), from: payload.planetId, to: payload.coords, ships: payload.ships, besoin });
+    if (keep > Math.floor(resources.deuterium)) throw new Error(`${e.message} (seulement ${Math.floor(resources.deuterium)} sur place)`);
+    const cargo = fillCargo(resources, cargoCap, keep);
+    const res = await postFleet({ ...payload, cargo }, prevIds);
+    return { res, note: `⛽ 1re tentative refusée (carburant : ${fmtNum(besoin)} deut) → repartie en laissant ${fmtNum(keep)} deut sur place` };
+  }
 }

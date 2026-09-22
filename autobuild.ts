@@ -10,6 +10,7 @@ import { alert, api, flags, fmtDur, fmtNum, log, resStr } from "./core.ts";
 
 const PLAN_FILE = "build-plan.json";
 const DECIDE_EVERY_MS = 60_000; // au plus une décision par planète par minute
+const BLOCK_MS = 30 * 60_000;   // clé refusée par le serveur (400) : on n'y retouche pas avant 30 min
 
 export type PlanetPlan = {
   enabled: boolean;
@@ -32,6 +33,8 @@ const MAX_LEVEL = 60; // borne du « niveau par niveau » après les paliers
 let plan: BuildPlan = {};
 let planMtime = 0;
 const lastDecision = new Map<string, number>();
+const blocked = new Map<string, number>(); // "planetId:key" → expiration du blocage (refus serveur)
+const isBlocked = (planetId: string, key: string) => (blocked.get(`${planetId}:${key}`) ?? 0) > Date.now();
 const queueEmptySince = new Map<string, number>(); // planetId → horloge serveur à laquelle la file est devenue vide
 
 function defaultPlan(s: State): BuildPlan {
@@ -71,10 +74,12 @@ export function setPlanetEnabled(planetId: string, v: boolean, s: State) {
 }
 
 type Choice = { key: string; name: string; next: number; tier: number; cost: { metal: number; crystal: number; deuterium: number }; durationMs: number; energyCost: number };
-type Skip = { key: string; next: number; why: "ressources" | "énergie" };
+type Skip = { key: string; next: number; why: string };
+/** Contexte serveur qui interdit certains bâtiments quoi qu'il arrive. */
+export type BuildCtx = { researchRunning?: boolean; blocked?: (key: string) => boolean };
 /** Prochain bâtiment selon les paliers : 1er de la liste sous le palier courant, finançable et sans passer l'énergie en négatif ;
  *  sinon le suivant de la liste (décision utilisateur). Ne rien lancer si rien n'est éligible. */
-export function nextBuilding(p: Planet, pp: PlanetPlan): { choice?: Choice; skipped: Skip[]; tier?: number; reason?: string } {
+export function nextBuilding(p: Planet, pp: PlanetPlan, ctx: BuildCtx = {}): { choice?: Choice; skipped: Skip[]; tier?: number; reason?: string } {
   const opts = new Map<string, any>((p.buildOptions ?? []).map((b: any) => [b.key, b]));
   const level = (k: string) => p.buildings?.[k] ?? 0;
   const tiers = [...(pp.tiers ?? DEFAULT_TIERS)];
@@ -86,6 +91,9 @@ export function nextBuilding(p: Planet, pp: PlanetPlan): { choice?: Choice; skip
     if (!todo.length) continue; // palier atteint partout (ou bâtiments indisponibles) → palier suivant
     for (const k of todo) {
       const o = opts.get(k);
+      // [TESTÉ 22/09] « Une recherche est en cours : aucun laboratoire ne peut être modifié tant qu'elle tourne »
+      if (k === "researchLab" && ctx.researchRunning) { skipped.push({ key: k, next: level(k) + 1, why: "labo bloqué : recherche en cours" }); continue; }
+      if (ctx.blocked?.(k)) { skipped.push({ key: k, next: level(k) + 1, why: "refusé par le serveur, réessai plus tard" }); continue; }
       const affordable = o.cost.metal <= p.resources.metal && o.cost.crystal <= p.resources.crystal && o.cost.deuterium <= p.resources.deuterium;
       const energyOk = (o.energyCost ?? 0) <= 0 || (p.energy?.balance ?? 0) - (o.energyCost ?? 0) >= 0;
       if (!affordable) { skipped.push({ key: k, next: level(k) + 1, why: "ressources" }); continue; }
@@ -96,6 +104,8 @@ export function nextBuilding(p: Planet, pp: PlanetPlan): { choice?: Choice; skip
   }
   return { skipped, reason: "tous les paliers atteints" };
 }
+
+const ctx = (s: State, planetId: string): BuildCtx => ({ researchRunning: !!s.player?.researchQueue, blocked: (k) => isBlocked(planetId, k) });
 
 /** Un tick : au plus un POST /build par appel. Respecte le délai de grâce après la fin d'un bâtiment. */
 export async function autobuildTick(s: State) {
@@ -111,14 +121,18 @@ export async function autobuildTick(s: State) {
     if (s.now - (queueEmptySince.get(p.id) ?? s.now) < (pp.graceMs ?? DEFAULT_GRACE_MS)) continue; // laisse 2 min à l'utilisateur
     if (Date.now() - (lastDecision.get(p.id) ?? 0) < DECIDE_EVERY_MS) continue;
     lastDecision.set(p.id, Date.now());
-    const { choice, skipped } = nextBuilding(p, pp);
+    const { choice, skipped } = nextBuilding(p, pp, ctx(s, p.id));
     if (!choice) continue;
     try {
-      const r = await api.build(p.id, choice.key);
+      await api.build(p.id, choice.key); // la réponse est l'état complet : on ne l'affiche pas
       const sk = skipped.length ? ` (sautés : ${skipped.map((x) => `${x.key} ${x.why}`).join(", ")})` : "";
       alert(`🏗 Auto : ${p.name} → ${choice.name} niveau ${choice.next} lancée [palier ${choice.tier}] · ${resStr(choice.cost)} · ${fmtDur(choice.durationMs)}${sk}`);
-      log("AUTOBUILD", p.name, choice.key, r);
-    } catch (e: any) { alert(`❌ Auto-construction ${p.name} ${choice.key} : ${e.message}`); }
+      log("AUTOBUILD", p.name, choice.key);
+    } catch (e: any) {
+      // Refus serveur : on bloque cette clé 30 min et on passera au bâtiment suivant (message envoyé une seule fois)
+      blocked.set(`${p.id}:${choice.key}`, Date.now() + BLOCK_MS);
+      alert(`❌ Auto-construction ${p.name} → ${choice.name} refusée : ${String(e.message).replace(/^\/build \d+: /, "")}\n→ mise de côté ${fmtDur(BLOCK_MS)}, on passe au suivant.`);
+    }
     return; // un seul POST par tick
   }
 }
@@ -132,7 +146,7 @@ export function planSummary(s: State): string {
     `Ordre : ${(d.order ?? []).join(" > ")}`,
     ...s.planets.map((p) => {
       const pp = planetPlan(pl, p.id);
-      const { choice, skipped, tier, reason } = nextBuilding(p, pp);
+      const { choice, skipped, tier, reason } = nextBuilding(p, pp, ctx(s, p.id));
       const cur = p.buildQueue ? ` 🏗 ${p.buildQueue.key} niv. ${p.buildQueue.targetLevel} en cours (fin dans ${fmtDur(p.buildQueue.finishesAt - s.now)})` : "";
       const next = choice
         ? `→ ${choice.name} niv. ${choice.next} [palier ${choice.tier}] · ${resStr(choice.cost)} · ${fmtDur(choice.durationMs)}`

@@ -79,6 +79,8 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
 
 ### 1. Fleet-save (par planète, multi-vagues) — sondes ET attaques
+- **Aucun vaisseau sur place** → alerte explicite (« impact dans X mais AUCUN vaisseau — rien à faire décoller ») et pas de faux message de rappel derrière [corrigé 22/09, vu sur BetweenLands].
+- **Carburant** : si le serveur refuse avec `Deutérium insuffisant : N nécessaires`, le bot relance une fois en laissant `N × 1,2` de deutérium sur place et le dit.
 - Poll `/state` toutes les 10 s (± 20 % de jitter, réglable `POLL_MS`). **Jamais de poll rapide** (soupçons) : quand une échéance approche (décollage à `arrivesAt − SAVE_BEFORE_MS`, rappel à `recallAt`), la boucle dort jusqu'à l'échéance exacte puis fait un seul appel. Tous les timings utilisent `now` (horloge serveur).
 - Format des menaces lu dans le bundle [BUNDLE, jamais vu en live] : `menaces[] = { fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }`.
   Le brut est loggé (`incoming-samples.jsonl`) **et notifié** dès qu'il change.
@@ -96,7 +98,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 ### 2. Ravitaillement (`/supply`) — manuel, depuis Père
 `/supply fils 40 14 90` → 40 000 métal, 14 000 cristal, 90 000 deut vers Fils (quantités en milliers ; `40k`, `1m`, ou brut ≥ 1000).
 - **PT d'abord** (22 000 de vitesse) dans une flotte à part, **GT en complément** dans une 2e flotte (dans une même flotte tout vole à la vitesse du plus lent). Un seul slot libre → envoi mixte avec avertissement.
-- Plafonné aux stocks de Père (garde `DEUT_RESERVE`) et à la place libre sur la cible. Part immédiatement, récap ✅ par flotte.
+- Plafonné **uniquement** aux stocks de Père (garde `DEUT_RESERVE`) : pas de limite liée à la capacité de la planète de destination. Part immédiatement, récap ✅ par flotte.
 - Le job automatique par seuils (`SUPPLY` dans bot.ts, flag `/supply_auto`) existe mais n'a pas de seuils configurés.
 
 ### 3. Collecte (`collect`) — colonies → Père
@@ -145,6 +147,13 @@ Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé 
   (deut > cristal > métal) en gardant **≥ 80 000 deutérium** sur Père (`EXPLO_DEUT_KEEP`). `h` par défaut = `maxHours`.
 
 ### 7. Notifications
+Formats confirmés en live le 22/09 (`menaces`, `alertesVives`, `reports`, `arrivalReports`) : plus aucun JSON brut n'est envoyé sur Telegram.
+- `🚨 ATTAQUE de 2003CP0 — 36 vaisseaux (25 croiseurs, 11 GT) depuis 17:7 → BetweenLands (17:6) · impact dans 5 min 20` (idem `🔍 SONDAGE`)
+- `🔍 2003CP0 a sondé BetweenLands (17:6) : 5 sondes envoyées, 0 repérées` (`alertesVives`)
+- `💥 Raid de 2003CP0 sur BetweenLands : pillé … · pertes défense : … · survivants attaquant : …` (rapport de combat subi)
+- `☠ Raid pirate T1 en 3:5 : butin … · pertes … · repaire détruit ✅ · avec Pirate` et `🏆 Trésor pirate : rang 1 · gain …`
+- `🛬 Retour sur Planète Père : 13 éclaireurs, 10 GT · 108 572 M · 54 286 C · 21 715 D`
+- Un élément au format inattendu est envoyé en brut **une seule fois** (pour correction), pas à chaque poll.
 - 🚨/🔍 menace en approche (attaque / sondage), 💥 impact.
 - 🏗 bâtiment terminé (planète + nom), 🔬 recherche terminée, 🚀 lot de chantier terminé.
 - 🔍 sondage subi (nouveau `spyReports[]` avec `role: "defender"`), 📜 rapport d'un genre encore inconnu (brut).
@@ -156,6 +165,7 @@ Règles (utilisateur, 21/09/2026) :
 - **Ordre** : robotFactory > shipyard > researchLab > solarPlant > fusionPlant > crystalMine > deuteriumSynthesizer > metalMine > missileSilo > metalStorage > crystalStorage > deuteriumStorage.
 - **Paliers** 5 → 7 → 9 → 10 : on parcourt la liste et on monte chaque bâtiment au palier courant ; quand tout est au palier, on passe au suivant. Après 10 : niveau par niveau (11, 12, …) dans le même ordre (`continueAfterTiers`).
 - Pas les ressources, ou énergie qui passerait en négatif → **on passe au suivant de la liste** (dans le même palier). Rien d'éligible au palier courant → on attend (pas de saut de palier).
+- `researchLab` est **sauté tant qu'une recherche tourne** (le serveur le refuse), et toute clé refusée par le serveur (400) est mise de côté **30 min** avec un message unique, puis on passe au bâtiment suivant.
 - **Délai de 2 min** après la fin d'un bâtiment (file vide) avant de lancer en auto, pour laisser la main (`graceMs`). Au démarrage du bot : délai complet.
 - Activable **par planète uniquement** (`enabled`, via `/autobuild <planète> on|off`) ; pas d'interrupteur global, `/pause` coupe tout. Au plus une décision par planète par minute, un seul `POST /build` par tick.
 

@@ -2,7 +2,7 @@
 // galaxy-snapshot.json), et scan « 15 sondes sur chaque planète du joueur en même temps » depuis Père.
 import { existsSync, readFileSync } from "node:fs";
 import type { GalaxySystem, LeaderboardRow, State } from "./spacek-client.ts";
-import { PERE, api, fmt, log, num, pere, prepareFleet, sendFleet, sleep, type FleetPlan } from "./core.ts";
+import { PERE, api, etaStr, fmt, log, num, pere, prepareFleet, sendFleet, sleep, type FleetPlan } from "./core.ts";
 
 const GALAXY_CACHE_MS = 30 * 60_000;
 const SCAN_PROBES = num("SCAN_PROBES", 15); // sondes par planète visée
@@ -114,8 +114,10 @@ export async function runScan(sc: ScanPlan): Promise<string> {
   for (const plan of sc.plans) {
     const t = sc.player.planets.find((x) => fmt(x) === fmt(plan.payload.coords));
     const line = `${fmt(plan.payload.coords)} ${t?.name ?? ""} — ${plan.payload.ships.espionageProbe} sondes`;
-    try { await sendFleet(plan); out.push(`✅ ${line}`); }
-    catch (e: any) { out.push(`❌ ${line} : ${e.message.slice(0, 120)}`); }
+    try {
+      const r = await sendFleet(plan);
+      out.push(`✅ ${line}${r.arrivesAt ? ` · arrivée dans ${etaStr(r.arrivesAt - ((r.state as any)?.now ?? Date.now()))}` : ""}`);
+    } catch (e: any) { out.push(`❌ ${line} : ${e.message.slice(0, 120)}`); }
   }
   return out.join("\n");
 }

@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, log, planetOrThrow, type FleetPlan, type Flags,
+  CARGO, DEUT_RESERVE, PERE, fleetResultStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -77,7 +77,17 @@ async function onCallback(cq: any) {
   try { send(`✅ OK\n${p.summary}\n→ ${short(await p.run())}`, chatId); }
   catch (e: any) { send(`❌ Échec : ${e.message}`, chatId); }
 }
-const short = (x: any) => (typeof x === "string" ? x : JSON.stringify(x ?? null)).slice(0, 1500);
+/** Résumé d'une réponse d'action : un POST réussi renvoie l'ÉTAT COMPLET, qu'on ne montre jamais. */
+const short = (x: any): string => {
+  if (x == null) return "✅ fait";
+  if (typeof x === "string") return x.slice(0, 500);
+  if (typeof x === "object") {
+    if (x.error) return `❌ ${String(x.error).slice(0, 300)}`;
+    if (x.state && ("fleetId" in x || "ships" in x)) return fleetResultStr(x as FleetResult); // envoi de flotte
+    if (x.planets || x.player) return "✅ pris en compte";                                     // réponse = état complet
+  }
+  return JSON.stringify(x).slice(0, 400);
+};
 
 // ---------- Parsing ----------
 const parseShips = (s: string): Record<string, number> => {
@@ -112,16 +122,15 @@ function planSupply(s: State, to: string, want: Res): { plans: FleetPlan[]; note
   const dest = planetOrThrow(s, to);
   if (dest.id === pere.id) throw new Error("Père est déjà la source");
   const notes: string[] = [];
+  // Pas de plafond côté destination (décision utilisateur) : on envoie ce qui est demandé, dans la limite du stock de Père.
   const cap = (k: keyof Res, avail: number) => {
-    let v = Math.min(want[k], Math.max(0, Math.floor(avail)));
+    const v = Math.min(want[k], Math.max(0, Math.floor(avail)));
     if (v < want[k]) notes.push(`${k} limité au stock de Père (${v.toLocaleString("fr-FR")})`);
-    const room = Math.max(0, Math.floor(dest.capacities[k] - dest.resources[k]));
-    if (v > room) { notes.push(`${k} plafonné à la place libre sur ${dest.name} (${room.toLocaleString("fr-FR")})`); v = room; }
     return v;
   };
   let left: Res = { metal: cap("metal", pere.resources.metal), crystal: cap("crystal", pere.resources.crystal), deuterium: cap("deuterium", pere.resources.deuterium - DEUT_RESERVE) };
   const total = left.metal + left.crystal + left.deuterium;
-  if (total <= 0) throw new Error("Rien à envoyer (stocks de Père ou place sur la cible insuffisants)");
+  if (total <= 0) throw new Error("Rien à envoyer (stocks de Père insuffisants)");
   const freeSlots = s.fleetSlots.total - s.fleetSlots.used;
   const pt = pere.ships.smallCargo ?? 0, gt = pere.ships.largeCargo ?? 0;
   const take = (r: Res, capa: number): Res => { // remplit une soute dans l'ordre deut > cristal > métal
@@ -349,7 +358,7 @@ async function handle(text: string, chatId: string) {
       await api.setRefreshToken(args[0]);
       return send("🔑 Refresh token remplacé et auth re-testée : OK ✅", chatId);
     }
-    case "/recall": { need(args, 1, "/recall <fleetId>"); return send(`RECALL ${args[0]} → ${short(await api.recall(args[0]))}`, chatId); }
+    case "/recall": { need(args, 1, "/recall <fleetId>"); await api.recall(args[0]); return send(`✅ Rappel demandé pour la flotte ${args[0]}`, chatId); }
 
     case "/send": {
       need(args, 4, "/send <planète> <mission> <sys:pos> <k=n,k=n> [m= c= d= speed=]");

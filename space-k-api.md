@@ -63,7 +63,9 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 - Lecture = `GET`, action = `POST` avec body JSON. [BUNDLE]
 - Les ids de planète (`pl_2w`…) et les clés d'unités (`largeCargo`, `cruiser`…) viennent de `/api/state`.
 - `coords` des envois : `{ system, position }`, **sans `galaxy`** (implicite, galaxie 1). [TESTÉ]
-- Réponses des POST : **inconnues** sauf `/api/fleet` (à documenter au premier appel).
+- **Réponses des POST** [TESTÉ 22/09] : tout POST qui réussit renvoie l'**état complet** du jeu (mêmes clés que `GET /state`) — il faut y retrouver soi-même ce qui a changé (ex. la flotte créée dans `fleets[]`). Une erreur renvoie un **400** avec `{ "error": "..." }`.
+- Erreurs `POST /api/fleet` rencontrées : `{"error":"Deutérium insuffisant : 8836 nécessaires pour le trajet"}` (le carburant est prélevé **en plus** de la soute : laisser du deutérium sur la planète de départ).
+- Erreur `POST /api/build` rencontrée : `{"error":"Une recherche est en cours : aucun laboratoire ne peut être modifié tant qu'elle tourne"}` (le `researchLab` est verrouillé tant que `player.researchQueue` n'est pas nul).
 
 ---
 
@@ -105,9 +107,11 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | `expedition` | `{ level, unlocked, unlock, slots, inFlight, maxHours, position (16), maxPerSystemPer24h, maxPerPlayerPer24h, lanceesAujourdhui, heureDeReset, saturatedSystems[] }` [TESTÉ 21/09] |
 | `joueurs[]` | `{ id, nom, libre }` — tous les joueurs (pour les pactes/échanges) [TESTÉ 21/09] |
 | `carteGalaxie` | `true` (indicateur, pas la carte) [TESTÉ 21/09] |
-| `menaces[]` | **Flottes hostiles en approche** [BUNDLE, jamais vu en live] : `{ fleetId, mission, attaquant, cible: { nom, coords }, arrivesAt }`. L'UI affiche « Sondage » si `mission === "espionage"`, « Destruction de lune » si `destroyMoon`, sinon « Attaque » |
-| `incoming[]` | Même famille, indexé par `fleetId` (toasts) [BUNDLE] |
-| `alertesVives[]`, `assautsSubis[]` | Alertes indexées par `id` (format des éléments non lu) [BUNDLE] |
+| `menaces[]` | **Flottes hostiles en approche** [TESTÉ 22/09] : `{ fleetId, mission, arrivesAt, attaquant, origine: {galaxy,system,position}, cible: { coords: {galaxy,system,position}, body: "planet", nom }, palier: "exact", total, types: [{key,count}] }`. `types` donne la composition exacte de la flotte ennemie. L'UI affiche « Sondage » si `mission === "espionage"`, « Destruction de lune » si `destroyMoon`, sinon « Attaque » |
+| `incoming[]` | Même famille, indexé par `fleetId` — **vide** pendant l'attaque observée le 22/09 (seul `menaces` était rempli) |
+| `alertesVives[]` | **Événements déjà passés**, pas des menaces (aucun `arrivesAt`) [TESTÉ 22/09] : `{ id, type: "espionnage", at, donnees: { attaquant, corps, coords, envoyees, reperees } }` |
+| `reports[]` | **Sans champ `kind` = combat subi** [TESTÉ 22/09] : `{ id, at, coords, attackerId, attackerName, defenderId, defenderName, planetName, outcome, rounds[], attackerLosses, defenderLosses, rebuiltDefences, attackerSurvivors, defenderSurvivors, plunder, debris, role, lu }`. `kind: "pirate"` : `{ tier, rounds, butin, attackerLosses, attackerSurvivors, garnisonDetruite, degatsCeRaid, repaireDetruit, rallies[], classement[] }`. `kind: "pirateTresor"` : `{ rang, degats, pertes, gain, classement[] }` |
+| `arrivalReports[]` | [TESTÉ 22/09] `{ id, kind: "arrivee", mission: "retour", at, coords, body, ownerId, corps, ships{}, cargo{}, missionAller, raison, depuisBalise, role, lu }` |
 | `spyReports[]` | `{ id, kind: "espionage", at, coords { galaxy, system, position }, attackerId, attackerName, defenderId, defenderName, planetName, probes, revenues, gap, levels, info, debris, counterEspionageRisk, probesLost, luPar[], role: "attacker"\|"defender", lu }` [TESTÉ 21/09] |
 | `reports[]` | Rapports de combat. Vus : `kind: "pirate"` `{ id, at, coords, attackerId, ownerId, tier, rounds[], attackerLosses, attackerSurvivors, garnisonDetruite, garnisonRestante, degatsCeRaid, degatsCumules, classement, butin, repaireDetruit, rallies, luPar, role, lu }` et `kind: "pirateTresor"`. **Pas de champ `defenderId`** — un combat subi n'a pas encore été observé [TESTÉ 21/09] |
 | `arrivalReports[]` | `{ id, kind: "arrivee", mission, at, coords, body, ownerId, corps, ships, cargo, missionAller, raison, depuisBalise, role, lu }` [TESTÉ 21/09] |
@@ -221,7 +225,7 @@ Hors périmètre : `/api/dev/*` (admin : sanction, boost, suppression de joueur�
 1. ~~Échange du ticket (§1.3)~~ → les deux, testé le 21/09/2026.
 2. Header **ou** cookie suffit-il seul ?
 3. Réponse JSON de chaque POST
-4. Format de `menaces` : lu dans le bundle (fleetId, mission, attaquant, cible, arrivesAt) — à confirmer en live
+4. ~~Format de `menaces`~~ → confirmé en live le 22/09 (voir le tableau ci-dessus)
 5. ~~Body d'une expédition et `rallier`~~ → `heures`, `rallier: true` lus dans le bundle le 21/09/2026
 6. 3e envoi à un écart de systèmes différent (valider la formule de distance)
 7. Effet de `speedPercent` < 100
