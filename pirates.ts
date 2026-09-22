@@ -4,6 +4,7 @@
 // et slots[].convoi = { tier, epave, total, … } [BUNDLE].
 import type { GalaxySlot, State } from "./spacek-client.ts";
 import { alert, api, fmtDur, log, num, sleep } from "./core.ts";
+import { postDiscord } from "./discord.ts";
 
 const PIRATE_CHECK_MS = num("PIRATE_CHECK_MS", 5 * 60_000);
 export type Pirate = { system: number; position: number; nom: string; tier: string; expireA?: number; maitrise?: boolean; boss?: boolean; kind: "pirate" | "convoi"; raw: any };
@@ -56,7 +57,11 @@ export async function piratesTick(s: State) {
     if (all.length) alert(`☠ Caches pirates actuelles (${all.length}) :\n${all.map((p) => pirateLine(p, s.now)).join("\n")}`);
     return;
   }
-  for (const p of news.sort((a, b) => a.system - b.system)) alert(`🏴‍☠️ NOUVELLE CACHE : ${pirateLine(p, s.now)}`);
+  for (const p of news.sort((a, b) => a.system - b.system)) {
+    const msg = `🏴‍☠️ NOUVELLE CACHE : ${pirateLine(p, s.now)}`;
+    alert(msg);
+    await postDiscord(msg); // Discord : uniquement les alertes pirates
+  }
 }
 
 export function piratesSummary(s: State): string {

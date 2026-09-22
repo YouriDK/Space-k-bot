@@ -128,6 +128,7 @@ sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de
 ### 4b. Veille des caches pirates (`pirates.ts`)
 - Toutes les 5 min (`PIRATE_CHECK_MS`) : un seul `GET /galaxy/carte` ; si le nombre de pirates d'un système change, lecture de ce système.
 - Notification 🏴‍☠️ à chaque nouvelle cache : nom, tier, position, expiration, échelon maîtrisé ou non, et le preset conseillé (T0 → `/p0`, T1 → `/p1`, T2 → `/p2`). Liste complète au démarrage et via `/pirates`.
+- **Discord** : chaque nouvelle cache est aussi postée sur un webhook de salon (`DISCORD_WEBHOOK_URL`, `discord.ts`) — pas de bot Discord, juste un POST. Rien d'autre n'y transite.
 - Les presets acceptent une cache pirate ou un convoi comme cible (le récap le dit, et avertit si le tier ne correspond pas au preset).
 
 ### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
