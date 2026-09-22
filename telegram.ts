@@ -253,7 +253,8 @@ async function handle(text: string, chatId: string) {
       const p = planet(s, nameParts.join(" "));
       if (!isOnOff(last)) return send(`Auto-construction ${p.name} : ${planetPlan(loadPlan(s), p.id).enabled ? "on" : "off"} · global ${getFlags().autobuild ? "ON" : "OFF"}\n${planSummary(s)}`, chatId);
       const pp = setPlanetEnabled(p.id, asBool(last), s);
-      return send(`Auto-construction ${p.name} : ${pp.enabled ? "on" : "off"}${!getFlags().autobuild ? " (flag global OFF → /autobuild on)" : ""}\n${planSummary(s)}`, chatId);
+      const warn = pp.enabled && !getFlags().autobuild ? `\n\n⚠️ RIEN NE SE LANCERA : l'interrupteur global est OFF. Tape  /autobuild on  pour démarrer.` : "";
+      return send(`Auto-construction ${p.name} : ${pp.enabled ? "on" : "off"}${warn}\n\n${planSummary(s)}`, chatId);
     }
     case "/status": return send(await withState(statusSummary), chatId);
     case "/planets": return send(await withState(planetsSummary), chatId);
