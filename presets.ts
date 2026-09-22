@@ -11,7 +11,7 @@ export const PRESETS: Record<string, Record<string, Preset>> = {
     under:      { ships: { cruiser: 7, largeCargo: 10 }, rallier: true },
     over:       { ships: { cruiser: 9, largeCargo: 10 }, rallier: true },
     opti_under: { ships: { pathfinder: 11 }, rallier: true },
-    opti_over:  { ships: { pathfinder: 13, largeCargo: 10 }, rallier: true },
+    opti_over:  { ships: { pathfinder: 13 }, rallier: true },
   },
   p1: {
     under:      { ships: { cruiser: 60, largeCargo: 30 }, rallier: true },

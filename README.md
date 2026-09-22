@@ -112,7 +112,7 @@ Jamais depuis/vers une planète menacée, pas de doublon.
 | `/p0 under <sys:pos>` | 7 croiseurs + 10 GT |
 | `/p0 over <sys:pos>` | 9 croiseurs + 10 GT |
 | `/p0 opti_under <sys:pos>` | 11 éclaireurs |
-| `/p0 opti_over <sys:pos>` | 13 éclaireurs + 10 GT |
+| `/p0 opti_over <sys:pos>` | 13 éclaireurs |
 | `/p1 under <sys:pos>` | 60 croiseurs + 30 GT |
 | `/p1 over <sys:pos>` | 70 croiseurs + 30 GT |
 | `/p1 trio <sys:pos>` | 50 croiseurs + 30 GT |
