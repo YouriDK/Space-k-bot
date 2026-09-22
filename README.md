@@ -125,6 +125,11 @@ sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de
 - `/p2 under <sys:pos>` — 110 croiseurs + 40 GT + 20 éclaireurs + 2 VB
 - `/p2 over <sys:pos>` — 110 croiseurs + 40 GT + 30 éclaireurs + 10 VB
 
+### 4b. Veille des caches pirates (`pirates.ts`)
+- Toutes les 5 min (`PIRATE_CHECK_MS`) : un seul `GET /galaxy/carte` ; si le nombre de pirates d'un système change, lecture de ce système.
+- Notification 🏴‍☠️ à chaque nouvelle cache : nom, tier, position, expiration, échelon maîtrisé ou non, et le preset conseillé (T0 → `/p0`, T1 → `/p1`, T2 → `/p2`). Liste complète au démarrage et via `/pirates`.
+- Les presets acceptent une cache pirate ou un convoi comme cible (le récap le dit, et avertit si le tier ne correspond pas au preset).
+
 ### 5. Scans (`/scan_<joueur>`, `/scan <joueur>`)
 15 sondes (`SCAN_PROBES`) depuis Père sur **chaque** planète du joueur, une flotte par planète, envoyées en même temps, **immédiatement** (pas de confirmation) ; récap ✅/❌ par planète.
 Pas assez de sondes → `floor(dispo / nb planètes)` par planète. Pas assez de slots → seules les N premières planètes.

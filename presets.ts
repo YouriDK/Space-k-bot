@@ -1,7 +1,8 @@
 // Presets d'attaque — toujours depuis Père, toujours « attendre l'allié » (rallier: true), mission attack.
 // Telegram : /p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>. La cible est vérifiée dans la galaxie avant confirmation.
 import type { State } from "./spacek-client.ts";
-import { PERE, SHIP_FR, parseCoords, prepareFleet, type FleetPlan } from "./core.ts";
+import { PERE, SHIP_FR, fmtDur, parseCoords, prepareFleet, type FleetPlan } from "./core.ts";
+import { presetFor } from "./pirates.ts";
 import { galaxySystemCached } from "./scan.ts";
 
 export type Preset = { ships: Record<string, number>; rallier: boolean };
@@ -43,9 +44,15 @@ export async function planPreset(s: State, group: string, variant: string, pos: 
   if (coords.position < 1 || coords.position > 15) throw new Error(`Position ${coords.position} hors planètes (1–15) : pas d'attaque`);
   const sys = await galaxySystemCached(coords.system);
   const slot = sys.slots.find((x) => x.position === coords.position);
-  if (!slot?.planet) throw new Error(`Aucune planète en ${pos} : pas d'attaque`);
-  if (slot.planet.ownerId === s.player.id) throw new Error(`${pos} est ta planète (${slot.planet.name}) : pas d'attaque`);
+  // Cible valide : une planète d'un autre joueur, OU une cache/convoi pirate (c'est la cible naturelle des presets p0/p1/p2)
+  if (!slot || (!slot.planet && !slot.pirate && !slot.convoi)) throw new Error(`Rien en ${pos} (ni planète, ni cache pirate) : pas d'attaque`);
+  if (slot.planet && slot.planet.ownerId === s.player.id) throw new Error(`${pos} est ta planète (${slot.planet.name}) : pas d'attaque`);
   const plan = prepareFleet(s, { from: PERE, mission: "attack", coords, ships: pr.ships, speedPercent, rallier: pr.rallier, label: `⚔️ ${group} ${variant}` });
-  plan.summary += `\nCible : ${slot.planet.name} de ${slot.planet.ownerName}${slot.planet.vacances ? " (vacances)" : ""}${slot.planet.protection ? " 🛡 protégée" : ""}${slot.planet.moon ? " 🌙" : ""}`;
+  if (slot.pirate) {
+    const expected = presetFor(slot.pirate.tier);
+    plan.summary += `\nCible : ☠ ${slot.pirate.nom} ${slot.pirate.tier}${slot.pirate.boss ? " (boss)" : ""}${slot.pirate.expireA ? ` · expire dans ${fmtDur(slot.pirate.expireA - s.now)}` : ""}` +
+      (slot.pirate.maitrise ? "\n⚠️ échelon déjà maîtrisé" : "") + (expected && expected !== `/${group.toLowerCase()}` ? `\n⚠️ tier ${slot.pirate.tier} → preset attendu ${expected}` : "");
+  } else if (slot.convoi) plan.summary += `\nCible : ☠ convoi pirate ${slot.convoi.tier ?? ""}${slot.convoi.epave ? " (épave, sans escorte)" : ""}`;
+  else if (slot.planet) plan.summary += `\nCible : ${slot.planet.name} de ${slot.planet.ownerName}${slot.planet.vacances ? " (vacances)" : ""}${slot.planet.protection ? " 🛡 protégée" : ""}${slot.planet.moon ? " 🌙" : ""}`;
   return plan;
 }

@@ -11,6 +11,7 @@ import {
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
+import { piratesSummary } from "./pirates.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
 import { MISSIONS, type Mission, type Res, type State } from "./spacek-client.ts";
 
@@ -171,6 +172,7 @@ Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
 /status — ressources, slots, flottes, menaces, latence
 /flotte — mes vaisseaux par planète + flottes en vol
 /threats — menaces en approche
+/pirates — caches pirates T0/T1/T2 connues, avec le preset conseillé
 /joueur <nom> — planètes, rang et puissance d'un joueur
 /plan — auto-construction : planètes actives, palier, prochain bâtiment
 /batiments <planète> — les 12 bâtiments : niveau, coût, durée
@@ -229,7 +231,7 @@ Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire
 /token <refresh_token> — renouvelle le token Keycloak (tous les 7 j max)
 /help full — commandes génériques (/send, /transport, /deploy, /spy, /build, /research, /ships, /cancel, /efficiency)
 
-🔔 Notifications automatiques : bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
+🔔 Notifications automatiques : 🏴‍☠️ nouvelle cache pirate (T0→/p0, T1→/p1, T2→/p2) · bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
 
 const HELP_FULL = `Lecture
 /status · /planets · /fleets · /threats · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
@@ -316,6 +318,7 @@ async function handle(text: string, chatId: string) {
     case "/planets": return send(await withState(planetsSummary), chatId);
     case "/fleets": return send(await withState(fleetsSummary), chatId);
     case "/threats": return send(await withState(threatsSummary), chatId);
+    case "/pirates": return send(await withState(piratesSummary), chatId);
     case "/presets": return send(presetsHelp(), chatId);
     case "/flags": return send(flagsStr(getFlags()), chatId);
 

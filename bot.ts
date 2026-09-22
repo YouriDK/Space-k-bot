@@ -13,6 +13,7 @@ import {
 import { parseThreats, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
 import { notifyTick } from "./notify.ts";
 import { autobuildTick } from "./autobuild.ts";
+import { piratesTick } from "./pirates.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
 
@@ -250,6 +251,7 @@ export async function watch() {
       sampleFleets(s);
       const threats = parseThreats(s);
       await fleetSaveTick(s, threats);
+      await piratesTick(s).catch((e) => log("PIRATES KO", e.message));
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }

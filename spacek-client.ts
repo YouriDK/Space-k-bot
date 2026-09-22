@@ -51,8 +51,9 @@ export type GalaxyPlanet = {
   id: string; name: string; ownerId: string; ownerName: string; temperature: number;
   vacances: boolean; protection: any; expose: boolean; ecart: any; moon: any;
 };
+export type GalaxyPirate = { nom: string; tier: string; expireA?: number; maitrise?: boolean; boss?: boolean; coque?: number }; // [TESTÉ 21/09 + BUNDLE]
 export type GalaxySlot = {
-  position: number; astroRequis: number; colonisable: boolean; pirate: any; balise: any; convoi: any; recup: any; contrat: any;
+  position: number; astroRequis: number; colonisable: boolean; pirate: GalaxyPirate | null; balise: any; convoi: any; recup: any; contrat: any;
   planet: GalaxyPlanet | null; debris: { metal: number; crystal: number } | null;
 };
 export type GalaxySystem = { system: number; slots: GalaxySlot[]; occupancy: any; recup: any };
