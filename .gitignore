@@ -12,3 +12,6 @@ node_modules/
 .DS_Store
 flags.json
 next-build.json
+
+# Relevé de galaxie (contient les pseudos et identifiants des autres joueurs)
+galaxy-snapshot.json

@@ -1,64 +1,118 @@
 # Space-K Bot
 
-Automatisation de **Space-K** (jeu de stratégie spatiale type OGame, app Kaiya `space-k.apps.kaiya.kreactive.fr`),
-joueur **SylvainGsHunter**. Le bot tourne 24/7 sur un **Samsung Note 9** (Termux) et se pilote par **Telegram**.
-Plus tard : mini API HTTP + app React via Tailscale.
+Bot d'automatisation pour **Space-K**, un jeu de stratégie spatiale de type OGame hébergé comme application interne.
+Il parle à l'API du jeu, tourne **24/7 sur un vieux téléphone Android** (Termux) et se pilote **depuis Telegram**.
 
-Ce README est la **source de vérité** du projet (récap + décisions). La référence API détaillée est dans
-[`space-k-api.md`](space-k-api.md).
+**Ce qu'il fait pour vous, sans intervention :**
 
-## Règles de travail
+- 🛡 **Fleet-save** — 10 s avant qu'une sonde ou une attaque ne touche une planète, toute la flotte décolle
+  avec un maximum de ressources, puis rentre juste après le passage. L'attaquant trouve une planète vide.
+- 🏗 **Auto-construction** — enchaîne les bâtiments selon une liste d'objectifs, planète par planète,
+  en gérant l'énergie, les réservoirs pleins et les files occupées.
+- ⏭ **`/next`** — met une construction ou une recherche en attente : elle part dès que la file se libère,
+  y compris en pleine nuit.
+- ☠ **Veille pirates** — annonce chaque nouvelle cache/repaire/bastion/citadelle avec le raid conseillé (Telegram + Discord).
+- ♻️ **Récupération** — envoie des recycleurs sur les champs de débris et des éclaireurs sur les cargaisons abandonnées.
+- 🔔 **Notifications** — bâtiment, recherche ou chantier terminés, sondage subi, attaque en approche, impact, rapports de combat, erreurs.
 
-- **Ne jamais inventer** une valeur, un endpoint ou un format. Si c'est inconnu, le dire.
-- Distinguer **[TESTÉ]** (appelé en live) / **[BUNDLE]** (signature lue dans le code client) / **[DÉDUIT]** / **[HYPOTHÈSE]**.
-- Ne **jamais** appeler `/api/dev/*` (routes admin).
-- Toute action de jeu (flotte, construction…) = confirmation avant de la lancer, y compris en test.
-- Tokens (`refresh_token.txt`, `.env`) : jamais commités, `chmod 600`. Voir `.gitignore`.
+**Ce que vous déclenchez depuis Telegram :** raids sur presets, scans d'un joueur entier, expéditions,
+ravitaillement entre planètes, constructions, recherches — chaque action réelle demande une confirmation ✅.
 
-## Fichiers
+Toutes les actions automatiques sont **désarmées par défaut** : le bot annonce ce qu'il *aurait* fait
+tant que vous ne l'avez pas armé (`/save on`, `/collect on`, `/autobuild <planète> on`…).
+
+> Le détail de l'API du jeu (auth, endpoints, formats, formules) est dans [`space-k-api.md`](space-k-api.md).
+> Chaque information y est marquée **[TESTÉ]** (appelée en live), **[BUNDLE]** (lue dans le code client),
+> **[DÉDUIT]** ou **[HYPOTHÈSE]** — rien n'est inventé.
+
+## Installation
+
+### 1. Sur la machine de développement
+
+```bash
+git clone <ce-dépôt> && cd spacek-bot
+npm install
+cp .env.example .env        # puis remplir (voir Configuration)
+npm run typecheck
+```
+
+### 2. Récupérer le jeton d'accès
+
+Le bot n'a besoin que d'un **refresh token Keycloak** pour régénérer tout le reste (il dure 7 jours d'inactivité
+et se renouvelle tout seul tant que le bot tourne).
+
+1. Ouvrir le portail du jeu dans une **fenêtre de navigation privée** et se connecter.
+2. Console du navigateur : `copy(localStorage.refresh_token)`.
+3. Fermer la fenêtre **sans se déconnecter** (un logout invaliderait le jeton).
+4. Coller la valeur dans `refresh_token.txt` (`chmod 600`).
+
+La fenêtre privée évite que le navigateur habituel et le bot se disputent la rotation du jeton.
+Plus tard, le renouvellement se fait sans SSH : `/token <valeur>` depuis Telegram.
+
+### 3. Bot Telegram
+
+1. Parler à **@BotFather** → `/newbot` → récupérer le token → `TG_TOKEN` dans `.env`.
+2. Lancer `npm run telegram` avec `TG_CHAT_ID` vide, écrire au bot : il répond votre chat id.
+3. Mettre ce chat id dans `TG_CHAT_ID`. Le bot n'obéira qu'à cette conversation et ignorera tout le reste.
+
+### 4. Serveur Android (Termux)
+
+Le bot est conçu pour un téléphone branché en permanence : consommation négligeable, pas de port ouvert
+(Telegram fonctionne en *long polling*), et il survit aux redémarrages.
+
+```bash
+# Depuis l'ordinateur, téléphone branché en USB, débogage activé :
+adb install termux-app.apk termux-boot.apk termux-api.apk      # versions GitHub, pas Play Store
+
+# Android 12+ tue les processus en arrière-plan : à désactiver
+adb shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647"
+adb shell "settings put global settings_enable_monitor_phantom_procs false"
+adb shell "device_config set_sync_disabled_for_tests persistent"
+adb shell "dumpsys deviceidle whitelist +com.termux"
+
+# Dans Termux : pkg install openssh nodejs, ajouter sa clé SSH, puis sshd
+# Ensuite tout se pilote à distance :
+scp *.ts *.json *.sh <user>@<ip-du-téléphone>:spacek-bot/    # port 8022
+ssh <user>@<ip-du-téléphone> "cd spacek-bot && bash setup-termux.sh"
+```
+
+`setup-termux.sh` installe les dépendances, `pm2`, le script de démarrage automatique (Termux:Boot)
+et crée un `.env` en mode observation. Ensuite :
+
+```bash
+pm2 start "npx tsx --env-file=.env telegram.ts" --name spacek && pm2 save
+pm2 logs spacek
+```
+
+Points d'attention : exclure Termux de l'optimisation de batterie, garder `termux-wake-lock` actif,
+et ne pas balayer l'application hors des récentes.
+
+### 5. Discord (optionnel)
+
+Salon → Intégrations → Webhooks → Nouveau webhook → copier l'URL dans `DISCORD_WEBHOOK_URL`.
+Aucun bot Discord n'est nécessaire : le serveur reçoit un simple POST. **Seules les alertes pirates** y sont publiées.
+
+## Configuration
 
 | Fichier | Rôle |
 |---|---|
-| `spacek-client.ts` | Client : auth auto (refresh Keycloak + rotation atomique, ticket, session, retry 401) + un wrapper par endpoint |
-| `bot.ts` + modules | Cœur (boucle, fleet-save, supply, collect) + `core.ts`, `threats.ts`, `presets.ts`, `scan.ts`, `expedition.ts`, `notify.ts`, `autobuild.ts` — voir « Modules ». CLI `watch` / `status` |
-| `telegram.ts` | Point d'entrée serveur : `watch()` + commandes Telegram (lecture et actions avec confirmation) + notifications + heartbeat |
-| `setup-termux.sh` | Installation sur le Note 9 (Termux, pm2, Termux:Boot) |
-| `space-k-api.md` | Référence API (auth, endpoints, bodies, champs de `/state`, formules) |
-| `.env.example` | Variables : `TG_TOKEN`, `TG_CHAT_ID`, flags, `HEARTBEAT_H`, `REFRESH_FILE`, `POLL_MS`, `SAVE_BEFORE_MS`, `SCAN_PROBES`, `EXPLO_DEUT_KEEP` |
-| `build-plan.json` | Priorités d'auto-construction par planète (éditable à chaud) |
-| `galaxy-snapshot.json` | Relevé complet de la galaxie du 21/09 (joueurs, planètes, débris) — cache initial des scans |
+| `.env` | Jetons, flags de départ, réglages (voir `.env.example`) — jamais commité |
+| `build-plan.json` | Objectifs d'auto-construction, activation par planète — rechargé à chaud |
+| `refresh_token.txt` | Jeton Keycloak, tourné automatiquement (`.bak` conservé) — jamais commité |
+| `flags.json`, `next-build.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
 
-Fichiers de données produits par le bot (ignorés par git) : `incoming-samples.jsonl` (menaces brutes),
-`fleet-samples.jsonl` (ships/distance/fuel pour les formules), `post-samples.jsonl` (réponses des POST), `seen.json` (ids notifiés).
+`HOME_PLANET` désigne la planète qui sert de hub (départ des raids, scans, expéditions et ravitaillements).
+Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous de `/api/state`.
 
-## Auth (chaîne complète)
+## Structure du code
 
-```
-refresh_token Keycloak (168 h d'inactivité, localStorage kaiya.kreactive.fr, clé refresh_token)
-  → POST https://auth.kreactive.fr/realms/PROD-Kaido/protocol/openid-connect/token
-      grant_type=refresh_token, client_id=front-public-client (public, pas de secret)
-      → access_token (5 min) + nouveau refresh_token (rotation : sauvegardé atomiquement)
-  → POST https://kaiya.kreactive.fr/api/custom-apps/space-k/embed-ticket   (Bearer access_token)
-      → 201 {"url": ".../__kaiya/session?ticket=…"}   [TESTÉ]
-  → GET url du ticket → kaiya_session (~12 h)   [DÉDUIT : Location #kaiya_session= ? Set-Cookie ? — le client essaie tout et logue]
-  → /api/* avec header x-kaiya-session + cookie kaiya_app_session   [TESTÉ]
-```
-
-- **Token dédié au bot** : copier le refresh token depuis une **fenêtre privée** (console → `copy(localStorage.refresh_token)`)
-  puis fermer la fenêtre, pour que le navigateur habituel n'entre pas en concurrence sur la rotation.
-- Le refresh token a 168 h d'**inactivité** : rafraîchi régulièrement par le bot, il devrait glisser indéfiniment
-  (sauf SSO Session Max côté Keycloak) — à vérifier sur le `exp` renvoyé. [DÉDUIT]
-- 401 = page HTML « Authentification requise », pas du JSON.
-
-## Planètes
-
-| Nom | id | Coords |
-|---|---|---|
-| Planète Père (hub, reçoit tout) | `pl_2w` | 6:4 |
-| Planète Fils | `pl_rn` | 6:7 |
-| Planète Oncle | `pl_402` | 6:2 |
-| Planète Cousin | `pl_4z8` | 13:6 |
-| BetweenLands | `pl_7vb` | 17:6 |
+| Fichier | Rôle |
+|---|---|
+| `spacek-client.ts` | Client API : chaîne d'authentification complète, rotation atomique du jeton, retry 401, un wrapper par endpoint |
+| `bot.ts` | Boucle de poll, fleet-save, ravitaillement, collecte, capture de données |
+| `telegram.ts` | Commandes, confirmations, notifications, heartbeat |
+| `setup-termux.sh` | Installation côté téléphone |
+| `space-k-api.md` | Référence de l'API du jeu |
 
 ## Fonctionnalités
 
@@ -73,10 +127,14 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 | `threats.ts` | Parsing de `menaces`/`incoming`/`alertesVives` (format du bundle) |
 | `bot.ts` | Boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés |
 | `presets.ts` | Raids `/p0` `/p1` (validation de la cible dans la galaxie) |
-| `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min, relevé `galaxy-snapshot.json`), scans `/scan_<joueur>` |
+| `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
 | `expedition.ts` | `/explo opti` et `/explo 911` |
 | `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
+| `nextbuild.ts` | `/next` : construction et recherche mises en attente |
+| `pirates.ts` | Veille des caches pirates (Telegram + Discord) |
+| `salvage.ts` | Débris (recycleurs) et cargaisons (éclaireurs) |
+| `discord.ts` | Webhook Discord (alertes pirates uniquement) |
 
 ### 1. Fleet-save (par planète, multi-vagues) — sondes ET attaques
 - **Aucun vaisseau sur place** → alerte explicite (« impact dans X mais AUCUN vaisseau — rien à faire décoller ») et pas de faux message de rappel derrière [corrigé 22/09, vu sur BetweenLands].
@@ -239,29 +297,14 @@ chasseur léger 50 · chasseur lourd 100 · sonde 5.
 - Conséquence : même dans le même système (distance 2 700), une flotte d'attaque met plusieurs minutes → la marge de 5 s tient.
   Les sondes arrivent quasi instantanément mais ne pillent pas. [CALCULÉ sur formule HYPOTHÈSE]
 
-## Serveur : Samsung Note 9
+## Sécurité et bon voisinage
 
-État au 21/09/2026 : **SM-N960F, LineageOS 23.2 (Android 16)**, Wi-Fi `192.168.1.155`, adb OK en USB.
-Rien d'installé (pas de Termux, F-Droid ni Tailscale). Le téléphone reste branché chez toi, en Wi-Fi ; il n'est pas relié au Mac en permanence.
-
-### Installation (par adb pendant qu'il est branché, puis ssh en Wi-Fi)
-1. APK **Termux** (release GitHub `termux/termux-app`, même build que F-Droid — pas Play Store) + **Termux:Boot** + **Termux:API** → `adb install`.
-2. Désactiver le *phantom process killer* (Android 12+) et exclure Termux de l'optimisation batterie (adb).
-3. Dans Termux : `pkg install openssh && passwd && sshd` → ensuite tout se fait en `ssh -p 8022 <user>@192.168.1.155`.
-4. Copier le projet dans `~/spacek-bot` (scp / git) + `refresh_token.txt` (`chmod 600`), puis `bash setup-termux.sh`.
-5. Bot Telegram via @BotFather → `TG_TOKEN` dans `.env` → lancer une fois pour obtenir le chat id → `TG_CHAT_ID`.
-6. `pm2 start "npx tsx --env-file=.env telegram.ts" --name spacek && pm2 save` · logs : `pm2 logs spacek`.
-7. `termux-wake-lock`, Wi-Fi « toujours actif », relance au boot via `~/.termux/boot/start-spacek.sh`.
-8. Batterie 24/7 sur un vieux téléphone : prise connectée avec timer (20–80 %) plutôt qu'une app root.
-9. Plus tard : Tailscale pour l'accès hors du réseau local.
-
-## Feuille de route
-
-1. Valider l'auth de bout en bout en **lecture seule** (`npx tsx --env-file=.env bot.ts status`) → documenter l'échange ticket → session (§1.3) et la rotation du refresh token.
-2. Fouiller le bundle client : format de `incoming`/`menaces`, éventuel push temps réel (`EventSource`/`WebSocket`), body d'expédition.
-3. Déployer sur le Note 9 en **mode observation** ; laisser tourner quelques jours (menaces, fuel, latences).
-4. Activer `collect` (BetweenLands), puis `supply` (seuils à définir), puis armer le fleet-save.
-5. Presets d'attaque (`p1` à définir), puis couche HTTP + app React.
+- **Rien de sensible dans le dépôt** : jetons, `.env`, état d'exécution et relevés de galaxie sont ignorés par git.
+  Les jetons sont masqués dans les logs.
+- **Pas de sondage agressif de l'API** : un appel toutes les 10 s avec 20 % de variation aléatoire, jamais de rafale.
+  Quand une échéance approche, le bot dort jusqu'à l'instant exact puis fait **un seul** appel.
+- Les routes d'administration du jeu ne sont **jamais** appelées.
+- Chaque action réelle déclenchée depuis Telegram demande une confirmation explicite.
 
 ## À vérifier / inconnues
 
@@ -277,18 +320,3 @@ Rien d'installé (pas de Termux, F-Droid ni Tailscale). Le téléphone reste bra
 10. Rotation du refresh token : l'ancien reste-t-il valide ? le `exp` glisse-t-il ?
 11. Android 16 + Termux : bootstrap, `termux-wake-lock`, pm2 en arrière-plan.
 
-## Docs de jeu (locales)
-
-- `~/Downloads/codex-space-k.md`
-- `~/Downloads/knowlegde-base-main/sujets/space-k-arbre-technologique/index.html`
-- Projet claude.ai : `moteur-combat.md`, `vaisseaux.md`, `defenses.md`, `Exemple attaque`, `Fonctionnement des combats`
-  (6 rounds, tir simultané, ciblage aléatoire, tir rapide, seuil 1 % du bouclier, destruction > 70 % de la coque, pillage 50 % plafonné par la soute).
-- Niveaux de recherche à jour : `player.research` dans `/state` (les fichiers datent du 12–15/09).
-
-## Observations de jeu (21/09/2026)
-
-- Mine de métal de Père réglée à **80 %** (énergie +444 depuis la centrale solaire 21).
-- Aucun bâtiment en construction sur les 5 planètes au dernier relevé.
-- BetweenLands déborde (90 k métal pour 6 000 de capacité), 50 petits transporteurs à quai.
-- 2003CP0 a attaqué BetweenLands avec 5 `battlecruiser` et la re-sonde. Ses techs Armes/Bouclier/Protection sont à 8.
-- Pacte actif avec Pirate.

@@ -3,7 +3,7 @@
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { SpaceK, type Coords, type Fleet, type Mission, type Res, type State, planetByName } from "./spacek-client.ts";
 
-export const PERE = "pl_2w";
+export const PERE = process.env.HOME_PLANET ?? "pl_2w"; // planète hub (départ des attaques, scans, expéditions)
 
 export function num(k: string, d: number) { const v = Number(process.env[k]); return Number.isFinite(v) && process.env[k] ? v : d; }
 export function bool(k: string, d = false) { const v = process.env[k]; return v == null || v === "" ? d : /^(1|true|on|yes)$/i.test(v); }
