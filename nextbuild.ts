@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Planet, State } from "./spacek-client.ts";
 import { alert, api, fmtDur, log, resStr } from "./core.ts";
+import { fleetBuildReserved } from "./fleetbuild.ts";
 
 const FILE = "next-build.json";
 const RETRY_MS = 60_000; // ressources manquantes / refus : on retente au plus une fois par minute
@@ -68,7 +69,7 @@ export const buildChoices = (p: Planet): BuildChoice[] =>
 /** À chaque poll : si la file est vide et qu'un ordre attend, on le lance immédiatement. */
 export async function nextBuildTick(s: State) {
   // Recherche : une seule à la fois pour tout l'empire
-  if (research && !s.player.researchQueue && Date.now() - (lastTry.get("research") ?? 0) >= RETRY_MS) {
+  if (research && !s.player.researchQueue && !fleetBuildReserved(research.planetId) && Date.now() - (lastTry.get("research") ?? 0) >= RETRY_MS) {
     lastTry.set("research", Date.now());
     const r = research;
     try {
@@ -85,7 +86,7 @@ export async function nextBuildTick(s: State) {
   }
   for (const p of s.planets) {
     const o = orders[p.id];
-    if (!o || p.buildQueue) continue;
+    if (!o || p.buildQueue || fleetBuildReserved(p.id)) continue; // /fleetbuild : ressources livrées réservées au chantier
     if (Date.now() - (lastTry.get(p.id) ?? 0) < RETRY_MS) continue;
     lastTry.set(p.id, Date.now());
     try {

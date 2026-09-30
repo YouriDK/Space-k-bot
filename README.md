@@ -99,7 +99,7 @@ Aucun bot Discord n'est nécessaire : le serveur reçoit un simple POST. **Seule
 | `.env` | Jetons, flags de départ, réglages (voir `.env.example`) — jamais commité |
 | `build-plan.json` | Objectifs d'auto-construction, activation par planète — rechargé à chaud |
 | `refresh_token.txt` | Jeton Keycloak, tourné automatiquement (`.bak` conservé) — jamais commité |
-| `flags.json`, `next-build.json`, `supply.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
+| `flags.json`, `next-build.json`, `supply.json`, `fleet-build.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
 
 `HOME_PLANET` désigne la planète qui sert de hub (départ des raids, scans, expéditions et ravitaillements).
 Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous de `/api/state`.
@@ -135,6 +135,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
 | `nextbuild.ts` | `/next` : construction et recherche mises en attente |
 | `supply.ts` | Auto-ravitaillement par colonie depuis Père (`/autosupply`), échéances persistées dans `supply.json` |
+| `fleetbuild.ts` | `/fleetbuild` : vaisseaux construits sur le chantier d'une colonie, ressources envoyées par Père, commandes persistées dans `fleet-build.json` |
 | `pirates.ts` | Veille des caches pirates (Telegram + Discord) |
 | `salvage.ts` | Débris (recycleurs) et cargaisons (éclaireurs) |
 | `discord.ts` | Webhook Discord (alertes pirates uniquement) |
@@ -272,6 +273,18 @@ Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémar
 - Ressources manquantes ou refus du jeu : l'ordre **reste en attente**, réessai chaque minute, un seul message d'alerte par motif.
 - Passe avant l'auto-construction : tant qu'un ordre `/next` attend, les priorités par paliers ne s'appliquent pas sur cette planète.
 
+### 8c. `/fleetbuild` — construire des vaisseaux en colonie, payés par Père
+Pour répartir la production sur les chantiers des colonies. Père paie, la planète choisie construit.
+- `/fleetbuild` → boutons : planète (niveau du chantier) → vaisseau (options **débloquées sur cette planète**, coût et durée par unité) → quantité (1, 5, 10, 20, 50, 100, 200 selon ce qui est possible, et **max** = ce que Père peut financer ET transporter). Après le clavier des quantités, un nombre tapé seul est pris comme quantité (5 min ; une commande `/…` annule la saisie).
+- `/fleetbuild <planète> <vaisseau> <qté|max>` → directement au récap. Vaisseau par clé API (`cruiser`) ou nom (`croiseurs`, `gt`, `pt`, `vb`, `éclaireur`, `traqueur`, `sonde`, `recycleur`…, casse et accents libres). `/fleetbuild <planète> [<vaisseau>]` ouvre la liste à l'étape suivante.
+- Récap ✅/❌ : N × vaisseau, coût total, durée estimée (N × durée unitaire), transport prévu, ce qui reste sur Père.
+- Confirmé : Père envoie le **coût total exact** (sans déduire le stock déjà présent sur la colonie) en **une** flotte transport, GT d'abord puis PT, `DEUT_RESERVE` gardé. Tout ou rien : pas de réduction de cargaison. Cible = Père : pas de transport, `POST /ships` immédiat.
+- Refus clairs **avant tout envoi** : vaisseau verrouillé, pas de chantier, Père trop pauvre (avec le max finançable), transporteurs insuffisants (avec combien il en faut), aucun slot.
+- Commande persistée dans `fleet-build.json` (n°, planète, vaisseau, quantité, coût, id de flotte, `arrivesAt`, état). Tick à chaque poll, avant la collecte, `/next` et l'auto-construction : à l'arrivée (`arrivesAt` serveur ; à défaut, flotte plus en phase aller), si le stock de la planète couvre le coût → `POST /ships`, alerte `🚀 <planète> : N <vaisseau> en construction`, commande retirée.
+- Stock insuffisant (crédit pas encore visible, ressources dépensées, flotte rappelée) ou refus du jeu : la commande reste, au plus un POST par minute, une alerte par raison, **aucun abandon automatique**.
+- **Réservation** : entre l'arrivée et le lancement, l'auto-construction, `/next` (bâtiment et recherche lancée depuis cette planète) et la collecte ne touchent pas à la planète. Pendant le vol, aucune réservation. `/pause` ne suspend pas ces commandes.
+- `/fleetbuild liste` → commandes en cours et leur état · `/fleetbuild annule <n°>` → retire la commande (le transport n'est **pas** rappelé : `/recall <fleetId>`).
+
 ### 9. Capture de données
 - `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **confirmer `parseThreats` au 1er échantillon**.
 - `fleet-samples.jsonl` : chaque flotte vue (`ships`, `distance`, `fuel`, timings) → ajuster la formule de carburant et de distance.
@@ -285,7 +298,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 **Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/autoexplo …` · `/plan` · `/batiments <planète>` ·
-`/autobuild …` · `/autosupply …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
+`/autobuild …` · `/autosupply …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
@@ -298,8 +311,9 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /spy <de> <sys:pos> [nbSondes]
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
+/fleetbuild [<planète> [<vaisseau> <qté>|max]]            (boutons, ressources envoyées par Père)
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.

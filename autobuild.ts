@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import type { Planet, State } from "./spacek-client.ts";
 import { alert, api, flags, fmtDur, fmtNum, log, resStr } from "./core.ts";
+import { fleetBuildReserved } from "./fleetbuild.ts";
 
 const PLAN_FILE = "build-plan.json";
 const DECIDE_EVERY_MS = 60_000;   // au plus une décision par planète par minute
@@ -156,7 +157,7 @@ export async function autobuildTick(s: State) {
   const ctx: Ctx = { researchRunning: !!s.player.researchQueue };
   for (const p of s.planets) {
     const pp = planetPlan(pl, p.id);
-    if (!pp.enabled || p.buildQueue) continue;
+    if (!pp.enabled || p.buildQueue || fleetBuildReserved(p.id)) continue; // /fleetbuild : ressources livrées réservées au chantier
     if (s.now - (queueEmptySince.get(p.id) ?? s.now) < (pp.graceMs ?? DEFAULT_GRACE_MS)) continue;
     if (Date.now() - (lastDecision.get(p.id) ?? 0) < DECIDE_EVERY_MS) continue;
     lastDecision.set(p.id, Date.now());

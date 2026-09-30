@@ -2,7 +2,7 @@
 //   npx tsx --env-file=.env bot.ts watch     → boucle complète (selon flags)
 //   npx tsx --env-file=.env bot.ts status    → résumé texte
 // Modules : core.ts (client, flags, helpers) · threats.ts · presets.ts · scan.ts · expedition.ts · notify.ts · autobuild.ts · nextbuild.ts
-//           supply.ts (auto-ravitaillement par colonie) · pirates.ts · salvage.ts
+//           supply.ts (auto-ravitaillement par colonie) · fleetbuild.ts (vaisseaux construits en colonie, payés par Père) · pirates.ts · salvage.ts
 //
 // Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / COLLECT_ENABLED = false) : le bot calcule, logue et notifie ce qu'il ferait,
 // mais n'émet aucun POST automatique. Auto-construction et auto-ravitaillement : désactivés tant qu'aucune planète n'est activée.
@@ -19,6 +19,7 @@ import { salvageTick } from "./salvage.ts";
 import { nextBuildTick } from "./nextbuild.ts";
 import { autoExploTick } from "./expedition.ts";
 import { supplyEnabled, supplyTarget, supplyTick } from "./supply.ts";
+import { fleetBuildReserved, fleetBuildTick } from "./fleetbuild.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
 
@@ -135,7 +136,7 @@ async function collect(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
   if (!pere || threatened.has(PERE)) return;
   for (const p of s.planets) {
-    if (p.id === PERE || threatened.has(p.id)) continue;
+    if (p.id === PERE || threatened.has(p.id) || fleetBuildReserved(p.id)) continue; // /fleetbuild : ressources livrées, pas encore lancées
     const want = collectWant(p);
     if (!want) continue;
     if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && f.origin?.planetId === p.id && same(f.target?.coords, pere.coords))) continue;
@@ -253,6 +254,7 @@ export async function watch() {
       await salvageTick(s).catch((e) => log("SALVAGE KO", e.message));
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
+      await fleetBuildTick(s).catch((e) => alert("FLEETBUILD KO", e.message)); // chaque poll, avant collect / next / autobuild (ressources livrées)
       if (Date.now() - lastSupply > SUPPLY_TICK_MS) { lastSupply = Date.now(); await supplyTick(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       await autoExploTick(s, threatened).catch((e) => alert("EXPLO AUTO KO", e.message));
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }

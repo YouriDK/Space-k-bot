@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
+  CARGO, DEUT_RESERVE, PERE, etaStr, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -17,12 +17,14 @@ import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
 import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
+import { cancelFleetBuild, costShort, fleetBuildMax, fleetBuildOrders, fleetBuildSummary, parseFleetBuildArgs, planFleetBuild, runFleetBuild, shipChoices, shipName } from "./fleetbuild.ts";
 import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
 const CHAT_ID = (process.env.TG_CHAT_ID ?? "").trim();
 const HEARTBEAT_MS = (Number(process.env.HEARTBEAT_H) || 6) * 3_600_000;
 const CONFIRM_TTL_MS = 60_000;
+const FB_WAIT_MS = 5 * 60_000; // /fleetbuild : délai pour taper la quantité au clavier après le choix du vaisseau
 if (!TOKEN) { console.error("TG_TOKEN manquant dans .env"); process.exit(1); }
 const TG = `https://api.telegram.org/bot${TOKEN}`;
 
@@ -106,6 +108,32 @@ async function onCallback(cq: any) {
       (pl.buildQueue ? `Lancé dès la fin de ${pl.buildQueue.key} (dans ${fmtDur(pl.buildQueue.finishesAt - s.now)}).` : "La file est libre : lancement au prochain passage (< 1 min)."));
     return done("Mis en attente");
   }
+  // /fleetbuild : planète → vaisseau → quantité → récap ✅ (fbq:<planète>:<clé>:<qté|max>)
+  if (verb === "fbp" || verb === "fbs" || verb === "fbq") {
+    const s = await getState();
+    const pl = s.planets.find((x) => x.id === id);
+    if (!pl) return done("Planète inconnue");
+    if (verb === "fbp") {
+      await edit(chatId, cq.message?.message_id, `🚀 ${pl.name} (chantier niv. ${pl.buildings?.shipyard ?? 0}) — quel vaisseau construire ?${pl.id === PERE ? "" : " Les ressources partiront de Père."}`, fbShipKeyboard(pl));
+      return done("");
+    }
+    const c = shipChoices(pl).find((x) => x.key === arg && !x.locked);
+    if (!c) return done("Vaisseau indisponible");
+    if (verb === "fbs") {
+      fbWait.set(chatId, { planetId: pl.id, key: c.key, expires: Date.now() + FB_WAIT_MS });
+      const { max } = fleetBuildMax(s, pl, c.key);
+      await edit(chatId, cq.message?.message_id,
+        `🚀 ${pl.name} — combien de ${c.name} ? (${costShort(c.cost)} · ${etaStr(c.unitMs)} l'unité · max ${max}${pl.id === PERE ? "" : " finançable et transportable par Père"})\n` +
+        `✍️ Ou tape simplement un nombre (ex. 35) dans les ${FB_WAIT_MS / 60_000} min ; une commande /… annule la saisie.`, fbQtyKeyboard(pl.id, c.key, max));
+      return done("");
+    }
+    fbWait.delete(chatId);
+    const q = String(cq.data).split(":")[3];
+    await edit(chatId, cq.message?.message_id, `🚀 ${pl.name} : ${q === "max" ? "max" : q} × ${c.name} → récapitulatif ci-dessous`);
+    await done("");
+    try { fbAsk(s, pl.id, c.key, q === "max" ? "max" : Number(q), chatId); } catch (e: any) { send(`❌ ${e.message}`, chatId); }
+    return;
+  }
   if (cq.message) tg("editMessageReplyMarkup", { chat_id: chatId, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }).catch(() => {});
   if (!p) return done("Demande inconnue ou déjà traitée");
   pending.delete(id);
@@ -151,6 +179,37 @@ const labNote = (s: State, p: Planet) => {
   return best.id !== p.id && (best.buildings?.researchLab ?? 0) > (p.buildings?.researchLab ?? 0)
     ? `\n⚠️ labo niv. ${p.buildings?.researchLab ?? 0} — ${best.name} a le niv. ${best.buildings?.researchLab}, la recherche y serait plus rapide.` : "";
 };
+
+// ---------- /fleetbuild : claviers et saisie de la quantité ----------
+const fbWait = new Map<string, { planetId: string; key: string; expires: number }>(); // chatId → vaisseau choisi, quantité attendue au clavier
+/** Clavier : une planète par ligne, niveau du chantier (📦 = commande /fleetbuild en cours). */
+const fbPlanetKeyboard = (s: State) => ({
+  inline_keyboard: s.planets.map((p) => [{
+    text: `${p.name} · chantier niv. ${p.buildings?.shipyard ?? 0}${p.shipQueue ? ` · 🚀 ${p.shipQueue.remaining} ${shipName(p.shipQueue.key)}` : ""}${fleetBuildOrders().some((o) => o.planetId === p.id) ? " 📦" : ""}`,
+    callback_data: `fbp:${p.id}`,
+  }]),
+});
+/** Clavier : les vaisseaux débloqués sur CETTE planète (coût et durée par unité). */
+const fbShipKeyboard = (p: Planet) => ({
+  inline_keyboard: shipChoices(p).filter((c) => !c.locked).map((c) => [{
+    text: `${c.name} · ${costShort(c.cost)} · ${etaStr(c.unitMs)}`,
+    callback_data: `fbs:${p.id}:${c.key}`,
+  }]),
+});
+/** Clavier : quantités usuelles (celles que Père peut payer et transporter) + max. */
+const fbQtyKeyboard = (planetId: string, key: string, max: number) => {
+  const btn = (q: number | "max", text = String(q)) => ({ text, callback_data: `fbq:${planetId}:${key}:${q}` });
+  const qs = [1, 5, 10, 20, 50, 100, 200].filter((q) => q <= max);
+  return { inline_keyboard: [qs.slice(0, 4).map((q) => btn(q)), qs.slice(4).map((q) => btn(q)), max > 0 ? [btn("max", `max (${max})`)] : []].filter((r) => r.length) };
+};
+/** Quantité choisie (bouton, saisie ou forme directe) → refus chiffré, ou récap ✅/❌ ; l'exécution revérifie sur un état frais. */
+function fbAsk(s: State, planetId: string, key: string, qty: number | "max", chatId: string) {
+  const p = planetOrThrow(s, planetId);
+  const n = qty === "max" ? fleetBuildMax(s, p, key).max : qty;
+  if (qty === "max" && n < 1) throw new Error(`Père ne peut financer ou transporter aucun ${shipName(key)} vers ${p.name} (/tips fleetbuild)`);
+  const plan = planFleetBuild(s, p, key, n);
+  askConfirm(plan.summary, () => runFleetBuild(p.id, key, n), chatId);
+}
 
 /** Résumé d'une réponse d'action : un POST réussi renvoie l'ÉTAT COMPLET, qu'on ne montre jamais. */
 const short = (x: any): string => {
@@ -315,6 +374,14 @@ PT d'abord (rapides), GT en complément dans une 2e flotte.
 Objectifs dans l'ordre : robots 12 > labo 10 > chantier 8 > mines 20 (métal, cristal, deut) > silo 5. Pas les sous → suivant ; réservoir plein → on l'agrandit avant la mine ; énergie qui passerait en négatif → centrale d'abord. 2 min de délai après chaque fin. Détail : /plan
 
 ━━━━━━━━━━━━━━━━━━━━
+🚀 CONSTRUCTION DE FLOTTE (payée par Père, récap + ✅)
+━━━━━━━━━━━━━━━━━━━━
+/fleetbuild — planète → vaisseau → quantité (boutons, ou tape le nombre)
+/fleetbuild <planète> <vaisseau> <qté> — direct (ex. /fleetbuild fils croiseurs 50)
+Père envoie le coût exact (GT puis PT) ; à l'arrivée le chantier de la planète lance la construction. Sur Père : lancement immédiat.
+/fleetbuild liste — commandes en cours · /fleetbuild annule <n°> — retire (sans rappeler le transport)
+
+━━━━━━━━━━━━━━━━━━━━
 🛡 DÉFENSE AUTO
 ━━━━━━━━━━━━━━━━━━━━
 /save on — arme le fleet-save : 10 s avant une sonde ou une attaque, toute la flotte + ressources décollent vers la planète voisine, rappel juste après
@@ -349,6 +416,8 @@ Actions (confirmation ✅/❌)
 /spy <de> <sys:pos> [nbSondes]
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
+/fleetbuild [<planète> [<vaisseau> <qté>|max]] — vaisseaux construits sur la planète, ressources envoyées par Père
+/fleetbuild liste · /fleetbuild annule <n°> (immédiat)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
@@ -473,6 +542,31 @@ async function handle(text: string, chatId: string) {
       }
       return send([...out, ...notes].join("\n\n"), chatId);
     }
+    case "/fleetbuild": {
+      // /fleetbuild → planètes · /fleetbuild <planète> → vaisseaux · /fleetbuild <planète> <vaisseau> [<qté>|max] · liste · annule <n°>
+      const s = await getState();
+      const sub = (args[0] ?? "").toLowerCase();
+      if (!args.length) return send("🚀 Construire des vaisseaux sur quelle planète ? (ressources payées par Père)", chatId, { reply_markup: fbPlanetKeyboard(s) });
+      if (args.length === 1 && (sub === "liste" || sub === "list")) return send(fleetBuildSummary(s), chatId);
+      if (sub === "annule" || sub === "annuler" || sub === "cancel") {
+        need(args, 2, "/fleetbuild annule <n°>");
+        const o = cancelFleetBuild(Number(args[1].replace(/^n°?/i, "")));
+        if (!o) throw new Error(`Commande n°${args[1]} inconnue (/fleetbuild liste)`);
+        return send(`🗑 Commande n°${o.id} retirée : ${o.qty} ${shipName(o.key)} sur ${o.planetName}.\n` + (o.status === "livree"
+          ? `Les ressources déjà livrées restent sur ${o.planetName}.`
+          : `Le transport n'est PAS rappelé : les ressources arriveront quand même sur ${o.planetName}${o.fleetId ? ` (pour le rappeler : /recall ${o.fleetId})` : ""}.`), chatId);
+      }
+      const { p, key, qty } = parseFleetBuildArgs(s, args);
+      if (!key) return send(`🚀 ${p.name} (chantier niv. ${p.buildings?.shipyard ?? 0}) — quel vaisseau construire ?`, chatId, { reply_markup: fbShipKeyboard(p) });
+      if (qty == null) {
+        const c = shipChoices(p).find((x) => x.key === key);
+        if (!c || c.locked) { planFleetBuild(s, p, key, 1); return; } // lève le refus clair (verrouillé, inconnu, pas de chantier)
+        fbWait.set(chatId, { planetId: p.id, key, expires: Date.now() + FB_WAIT_MS });
+        const { max } = fleetBuildMax(s, p, key);
+        return send(`🚀 ${p.name} — combien de ${c.name} ? (${costShort(c.cost)} · ${etaStr(c.unitMs)} l'unité · max ${max})\n✍️ Ou tape simplement un nombre dans les ${FB_WAIT_MS / 60_000} min.`, chatId, { reply_markup: fbQtyKeyboard(p.id, key, max) });
+      }
+      return fbAsk(s, p.id, key, qty, chatId);
+    }
     case "/salvage": case "/recup_list": return send(await salvageSummary(await getState()), chatId);
     case "/autosupply": case "/supply_auto": {
       // /autosupply <planète…> on|off · /autosupply <planète…> (état) · /autosupply (tout) · /autosupply off (désactive tout). Pas d'interrupteur global.
@@ -586,6 +680,14 @@ async function poll() {
         if (!CHAT_ID) { log("chat id reçu :", chatId, "(mets TG_CHAT_ID dans .env)"); send(`Ton chat id est ${chatId} — mets TG_CHAT_ID=${chatId} dans .env et relance.`, chatId); continue; }
         if (chatId !== CHAT_ID) continue; // silence pour les inconnus
         log("TG <", msg.text.startsWith("/token") ? "/token <masqué>" : msg.text);
+        // /fleetbuild : quantité tapée au clavier (entier seul) ; une commande /… ou l'expiration annule la saisie
+        const w = fbWait.get(chatId), txt = msg.text.trim();
+        if (w && (txt.startsWith("/") || Date.now() > w.expires)) fbWait.delete(chatId);
+        else if (w && /^\d+$/.test(txt)) {
+          fbWait.delete(chatId);
+          await getState().then((s) => fbAsk(s, w.planetId, w.key, Number(txt), chatId)).catch((e: any) => send(`❌ ${e.message}`, chatId));
+          continue;
+        }
         await handle(msg.text, chatId).catch((e: any) => send(`❌ ${e.message}`, chatId));
       }
     } catch (e: any) { log("TG poll KO", e.message); await new Promise((r) => setTimeout(r, 5_000)); }
