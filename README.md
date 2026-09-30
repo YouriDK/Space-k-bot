@@ -118,7 +118,7 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 
 Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `SUPPLY_ENABLED`, `COLLECT_ENABLED`, `AUTOBUILD_ENABLED` sont à `false`.
 Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
-Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect on`, `/autobuild on`, `/pause`, `/resume`).
+Les flags se changent à chaud via Telegram (`/save on`, `/autosupply on`, `/collect on`, `/autobuild on`, `/pause`, `/resume`).
 
 ### Modules
 | Fichier | Rôle |
@@ -126,7 +126,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 | `core.ts` | Client, flags, log/notification, santé, `prepareFleet`/`sendFleet`, helpers |
 | `threats.ts` | Parsing de `menaces`/`incoming`/`alertesVives` (format du bundle) |
 | `bot.ts` | Boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés |
-| `presets.ts` | Raids `/p0` `/p1` (validation de la cible dans la galaxie) |
+| `presets.ts` | Raids `/p0` `/p1` `/p2` `/p3` (validation de la cible dans la galaxie) |
 | `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
 | `expedition.ts` | `/explo opti` et `/explo 911` |
 | `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
@@ -157,37 +157,45 @@ Les flags se changent à chaud via Telegram (`/save on`, `/supply on`, `/collect
 `/supply fils 40 14 90` → 40 000 métal, 14 000 cristal, 90 000 deut vers Fils (quantités en milliers ; `40k`, `1m`, ou brut ≥ 1000).
 - **PT d'abord** (22 000 de vitesse) dans une flotte à part, **GT en complément** dans une 2e flotte (dans une même flotte tout vole à la vitesse du plus lent). Un seul slot libre → envoi mixte avec avertissement.
 - Plafonné **uniquement** aux stocks de Père (garde `DEUT_RESERVE`) : pas de limite liée à la capacité de la planète de destination. Part immédiatement, récap ✅ par flotte.
-- Le job automatique par seuils (`SUPPLY` dans bot.ts, flag `/supply_auto`) existe mais n'a pas de seuils configurés.
+- **Auto-ravitaillement** : flag `/autosupply on|off` (alias `/supply_auto`), passage toutes les 60 s. Pour chaque colonie (toute planète sauf Père), cible **500 000 métal / 350 000 cristal / 150 000 deut** (`SUPPLY_TARGET_METAL`, `SUPPLY_TARGET_CRYSTAL`, `SUPPLY_TARGET_DEUT` dans `.env` ; surcharge par planète possible via `SUPPLY` dans bot.ts).
+  Dès que le manque total atteint `SUPPLY_MIN_SEND` (20 000), Père envoie le complément arrondi au millier, GT d'abord puis PT en complément dans la même flotte.
+  Limité au stock de Père (garde `DEUT_RESERVE`), sans plafond lié à la capacité de la destination ; jamais depuis/vers une planète menacée ; pas de doublon si un transport est déjà en route vers la colonie.
+  Quand il est actif, la collecte (section 3) ne redescend pas une colonie sous sa cible (pas d'aller-retour). Flag off = mode observation (log « j'aurais envoyé »).
+  Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même.
 
 ### 3. Collecte (`collect`) — colonies → Père
 BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si une ressource dépasse `COLLECT_THRESHOLD` (90 %)
 de la capacité, le surplus au-dessus de `COLLECT_KEEP` (50 %) part vers Père avec les transporteurs sur place (GT puis PT).
 Jamais depuis/vers une planète menacée, pas de doublon.
 
-### 4. Raids (`/p0`, `/p1`, `/p2`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
+### 4. Raids (`/p0`, `/p1`, `/p2`, `/p3`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
 | Commande | Composition |
 |---|---|
 | `/p0 under <sys:pos>` | 7 croiseurs + 10 GT |
 | `/p0 over <sys:pos>` | 9 croiseurs + 10 GT |
 | `/p0 opti_under <sys:pos>` | 11 éclaireurs |
 | `/p0 opti_over <sys:pos>` | 13 éclaireurs |
-| `/p1 under <sys:pos>` | 60 croiseurs + 30 GT |
-| `/p1 over <sys:pos>` | 70 croiseurs + 30 GT |
+| `/p1 under <sys:pos>` | 50 croiseurs + 30 GT |
+| `/p1 over <sys:pos>` | 30 croiseurs + 30 GT |
 | `/p1 trio <sys:pos>` | 50 croiseurs + 30 GT |
 | `/p1 opti_under <sys:pos>` | 20 croiseurs + 32 éclaireurs |
 | `/p1 opti_over <sys:pos>` | 10 croiseurs + 32 éclaireurs |
 | `/p1 opti_trio <sys:pos>` | 5 croiseurs + 32 éclaireurs (la 2e ligne « trio » de la spec) |
+| `/p2 trio <sys:pos>` | 110 croiseurs + 40 GT + 10 éclaireurs + 2 VB |
+| `/p2 under <sys:pos>` | 160 croiseurs + 50 GT + 50 éclaireurs |
+| `/p2 over <sys:pos>` | 140 croiseurs + 50 GT + 50 éclaireurs |
+| `/p3 <sys:pos>` (ou `/p3 tout <sys:pos>`) | **dynamique** : jusqu'à 150 GT + tous les croiseurs, éclaireurs, VB et traqueurs à quai sur Père |
+
+`/p3` (caches T3) calcule la flotte au moment de la commande d'après ce qui est à quai sur Père ; les vaisseaux lents (bombardiers, destructeurs, recycleurs…) restent à quai.
+Moins de 150 GT → ligne `⚠️ seulement N GT à quai (150 visés)` dans le récap ; aucun vaisseau de combat à quai → refus, pas d'attaque.
+Quand un groupe n'a qu'une variante, elle est facultative dans la commande.
 
 Avant la confirmation, la cible est vérifiée par `GET /galaxy?system=N` : position 1–15, planète présente, pas à nous ;
 sinon « Aucune planète en X:Y » et pas d'attaque. Le récap affiche le nom de la planète et son propriétaire.
 
-- `/p2 trio <sys:pos>` — 110 croiseurs + 40 GT + 10 éclaireurs + 2 VB
-- `/p2 under <sys:pos>` — 110 croiseurs + 40 GT + 20 éclaireurs + 2 VB
-- `/p2 over <sys:pos>` — 110 croiseurs + 40 GT + 30 éclaireurs + 10 VB
-
 ### 4b. Veille des caches pirates (`pirates.ts`)
 - Toutes les 5 min (`PIRATE_CHECK_MS`) : un seul `GET /galaxy/carte` ; si le nombre de pirates d'un système change, lecture de ce système.
-- Notification 🏴‍☠️ à chaque nouvelle cache : nom, tier, position, expiration, échelon maîtrisé ou non, et le preset conseillé (T0 → `/p0`, T1 → `/p1`, T2 → `/p2`). Liste complète au démarrage et via `/pirates`.
+- Notification 🏴‍☠️ à chaque nouvelle cache : nom, tier, position, expiration, échelon maîtrisé ou non, et le preset conseillé (T0 → `/p0`, T1 → `/p1`, T2 → `/p2`, T3 → `/p3`). Liste complète au démarrage et via `/pirates` ; `/pirates p1|p2|p3` (plusieurs possibles, `t1` accepté) n'affiche que ce niveau, sans appel réseau supplémentaire.
 - **Discord** : chaque nouvelle cache est aussi postée sur un webhook de salon (`DISCORD_WEBHOOK_URL`, `discord.ts`) — pas de bot Discord, juste un POST. Rien d'autre n'y transite.
 - Les presets acceptent une cache pirate ou un convoi comme cible (le récap le dit, et avertit si le tier ne correspond pas au preset).
 
@@ -265,12 +273,12 @@ Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémar
 
 Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vide → le bot répond « ton chat id est X » et n'exécute rien.
 
-**Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
+**Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
 `/autobuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
-/p0 <variante> <sys:pos> · /p1 <variante> <sys:pos>
+/p0 · /p1 · /p2 <variante> <sys:pos> · /p3 <sys:pos>
 /scan_<joueur> · /scan <joueur>
 /explo opti <h> · /explo 911 [h]
 /send <planète> <mission> <sys:pos|planète> <k=n,k=n> [m=… c=… d=… speed=…]
@@ -280,7 +288,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/supply on|off` · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autosupply on|off` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.
@@ -316,7 +324,7 @@ chasseur léger 50 · chasseur lourd 100 · sonde 5.
 6. Consommation de deut (formule carburant) → `DEUT_RESERVE = 5000` arbitraire. Données : `fleets[].distance` + `fuel`.
 7. Effet de `speedPercent` < 100 ; 3e point pour la formule de distance.
 8. Body d'une expédition (durée), rôle de `rallier` et de `/fleet/ralliement/lancer`.
-9. Config manquante : composition **P1**, seuils **`SUPPLY`** par colonie.
+9. Auto-ravitaillement : cibles par défaut (500 k / 350 k / 150 k) à valider en conditions réelles ; surcharges par colonie via **`SUPPLY`** si besoin.
 10. Rotation du refresh token : l'ancien reste-t-il valide ? le `exp` glisse-t-il ?
 11. Android 16 + Termux : bootstrap, `termux-wake-lock`, pm2 en arrière-plan.
 

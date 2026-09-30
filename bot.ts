@@ -7,7 +7,7 @@
 // le bot calcule, logue et notifie ce qu'il ferait, mais n'émet aucun POST automatique.
 import type { Coords, Fleet, Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, etaStr, fillCargo, flags, fleetResultStr, fmt, getFlags,
+  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, etaStr, fillCargo, flags, fleetResultStr, fmt, fmtDur, fmtNum, getFlags,
   getHealth, getState, log, num, recordError, resStr, roundRes, same, sendFleetFuelSafe, shipsStr, sleep, xy,
 } from "./core.ts";
 import { parseThreats, threatDesc, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
@@ -20,12 +20,18 @@ export * from "./core.ts";
 export * from "./threats.ts";
 
 // ================= CONFIG =================
-// Stock minimal visé sur chaque colonie, complété depuis Père (vide = désactivé)
+// Ravitaillement auto : toute colonie (≠ Père) est complétée depuis Père jusqu'à SUPPLY_TARGET (au millier près, sans plafond de capacité :
+// le transport peut dépasser la capacité). SUPPLY = surcharge par planète, fusionnée sur la cible par défaut.
+export const SUPPLY_TARGET: Res = {
+  metal: num("SUPPLY_TARGET_METAL", 500_000), crystal: num("SUPPLY_TARGET_CRYSTAL", 350_000), deuterium: num("SUPPLY_TARGET_DEUT", 150_000),
+};
 export const SUPPLY: Record<string, Partial<Res>> = {
   // pl_rn: { metal: 100_000, crystal: 50_000, deuterium: 20_000 },  // Planète Fils
 };
+export const supplyTarget = (planetId: string): Res => ({ ...SUPPLY_TARGET, ...SUPPLY[planetId] });
 const SUPPLY_EVERY_MS = 60_000;
-const SUPPLY_MIN_SEND = 20_000;       // pas de vol pour moins que ça
+const SUPPLY_MIN_SEND = num("SUPPLY_MIN_SEND", 20_000); // pas de vol pour moins que ça
+const SUPPLY_RETRY_MS = 15 * 60_000;  // après un envoi refusé par le jeu, délai avant de réessayer vers la même colonie
 const COLLECT_EVERY_MS = 60_000;
 const COLLECT_THRESHOLD = num("COLLECT_THRESHOLD", 0.9); // déclenche quand une ressource dépasse 90 % de la capacité
 const COLLECT_KEEP = num("COLLECT_KEEP", 0.5);           // …et ramène le stock à 50 % (évite un vol toutes les minutes)
@@ -116,48 +122,95 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
   // Si on avait déjà décollé, le rappel se fait à recallAt comme prévu.
 }
 
-// ---------- 2. Approvisionnement depuis Père ----------
+// ---------- 2. Ravitaillement auto depuis Père ----------
+const RES_KEYS: (keyof Res)[] = ["metal", "crystal", "deuterium"];
+const resFmt = (r: Res) => `M ${fmtNum(r.metal)} · C ${fmtNum(r.crystal)} · D ${fmtNum(r.deuterium)}`;
+export type SupplyStep = { p: Planet; ships: Record<string, number>; cargo: Res; skip?: string };
+/** Calcul pur d'un passage (aucun POST) : manque = cible − stock arrondi au millier supérieur, don de Père au millier inférieur
+ *  (deut : au-delà de DEUT_RESERVE). Les colonies se partagent stock, transporteurs et slots de Père (copies locales décrémentées). */
+export function planSupplyAuto(s: State, threatened: Set<string>): SupplyStep[] {
+  const pere = s.planets.find((p) => p.id === PERE);
+  if (!pere || threatened.has(PERE)) return [];
+  const stock: Res = { ...pere.resources }, quai: Record<string, number> = { ...pere.ships }, steps: SupplyStep[] = [];
+  let used = s.fleetSlots.used;
+  for (const p of s.planets) {
+    if (p.id === PERE || threatened.has(p.id)) continue; // jamais vers une planète menacée
+    if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && same(f.target?.coords, p.coords))) continue;
+    const t = supplyTarget(p.id);
+    const need = (k: keyof Res) => Math.ceil(Math.max(0, t[k] - Math.floor(p.resources[k])) / 1000) * 1000; // pas de plafond de capacité
+    const dispo = (k: keyof Res) => Math.floor(Math.max(0, stock[k] - (k === "deuterium" ? DEUT_RESERVE : 0)) / 1000) * 1000;
+    let cargo: Res = { metal: Math.min(need("metal"), dispo("metal")), crystal: Math.min(need("crystal"), dispo("crystal")), deuterium: Math.min(need("deuterium"), dispo("deuterium")) };
+    const total = cargo.metal + cargo.crystal + cargo.deuterium;
+    if (total < SUPPLY_MIN_SEND) continue;
+    // Transporteurs à quai sur Père : GT d'abord, PT en complément, une seule flotte
+    const ships: Record<string, number> = {};
+    let cap = 0;
+    for (const k of ["largeCargo", "smallCargo"]) {
+      const n = Math.min(quai[k] ?? 0, Math.ceil(Math.max(0, total - cap) / CARGO[k]));
+      if (n > 0) { ships[k] = n; cap += n * CARGO[k]; }
+    }
+    if (!cap) { steps.push({ p, ships, cargo, skip: "aucun transporteur à quai sur Père" }); continue; }
+    if (used >= s.fleetSlots.total) { steps.push({ p, ships, cargo, skip: `aucun slot libre (${used}/${s.fleetSlots.total})` }); break; }
+    if (cap < total) cargo = fillCargo(cargo, cap, 0); // soute insuffisante : on réduit (priorité deut > cristal > métal), le reste au passage suivant
+    steps.push({ p, ships, cargo });
+    used++;
+    for (const k of RES_KEYS) stock[k] -= cargo[k];
+    for (const [k, n] of Object.entries(ships)) quai[k] -= n;
+  }
+  return steps;
+}
+
 let lastSupply = 0;
+const supplyLogged = new Map<string, string>(); // planetId → dernière ligne logguée (observation / blocage) : pas la même toutes les 60 s
+const supplyKo = new Map<string, number>();     // planetId → dernier envoi refusé : on attend SUPPLY_RETRY_MS avant de réessayer
 async function supply(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
   if (!pere || threatened.has(PERE)) return;
-  for (const [pid, want] of Object.entries(SUPPLY)) {
-    const p = s.planets.find((x) => x.id === pid);
-    if (!p || threatened.has(p.id)) continue; // jamais vers une planète menacée
-    if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && same(f.target?.coords, p.coords))) continue;
-    const need = (k: keyof Res) => Math.max(0, Math.min(want[k] ?? 0, p.capacities[k]) - Math.floor(p.resources[k]));
-    let cargo: Res = {
-      metal: Math.min(need("metal"), Math.floor(pere.resources.metal)),
-      crystal: Math.min(need("crystal"), Math.floor(pere.resources.crystal)),
-      deuterium: Math.min(need("deuterium"), Math.max(0, Math.floor(pere.resources.deuterium) - DEUT_RESERVE)),
-    };
-    const total = cargo.metal + cargo.crystal + cargo.deuterium;
-    if (total < SUPPLY_MIN_SEND) continue;
-    const lc = Math.min(pere.ships.largeCargo ?? 0, Math.ceil(total / CARGO.largeCargo));
-    if (!lc) { log("Pas de grand transporteur à Père pour", p.name); continue; }
-    if (lc * CARGO.largeCargo < total) cargo = fillCargo({ ...cargo, deuterium: cargo.deuterium + DEUT_RESERVE }, lc * CARGO.largeCargo);
-    if (s.fleetSlots.used >= s.fleetSlots.total) { log("SUPPLY : aucun slot libre"); return; }
-    const what = `Père → ${p.name} : ${lc} GT · ${resStr(cargo)}`;
-    if (!flags.supply) { log(`[OBSERVATION] SUPPLY j'aurais envoyé ${what}`); continue; }
-    const sup = await sendFleetFuelSafe({ planetId: PERE, mission: "transport", coords: xy(p.coords), ships: { largeCargo: lc }, cargo, speedPercent: 100 },
-      pere.resources, lc * CARGO.largeCargo, new Set(s.fleets.map((f) => f.id)));
-    alert(`SUPPLY ${what}${sup.note ? `\n${sup.note}` : ""}\n${fleetResultStr(sup.res)}`);
-    pere.ships.largeCargo -= lc; s.fleetSlots.used++;
+  const steps = planSupplyAuto(s, threatened);
+  for (const id of [...supplyLogged.keys()]) if (!steps.some((st) => st.p.id === id)) supplyLogged.delete(id); // plus de manque → on réarme
+  const once = (id: string, msg: string) => { if (supplyLogged.get(id) !== msg) { supplyLogged.set(id, msg); log(msg); } };
+  for (const { p, ships, cargo, skip } of steps) {
+    if (skip) { once(p.id, `SUPPLY ${p.name} : ${skip}`); continue; }
+    const what = `Père → ${p.name} : ${shipsStr(ships)} · ${resFmt(cargo)}`;
+    if (!flags.supply) { once(p.id, `[OBSERVATION] SUPPLY j'aurais envoyé ${what}`); continue; }
+    if (Date.now() - (supplyKo.get(p.id) ?? 0) < SUPPLY_RETRY_MS) continue; // envoi refusé récemment : pas de POST en boucle
+    supplyLogged.delete(p.id);
+    // Rattrapage carburant : deut réel de Père + métal/cristal prévus → la 2e tentative n'emporte jamais plus que prévu
+    const sup = await sendFleetFuelSafe({ planetId: PERE, mission: "transport", coords: xy(p.coords), ships, cargo, speedPercent: 100 },
+      { ...cargo, deuterium: pere.resources.deuterium }, capacity(ships), new Set(s.fleets.map((f) => f.id)))
+      .catch((e) => { supplyKo.set(p.id, Date.now()); alert(`📦 SUPPLY KO ${what}\n${e.message}\nNouvel essai dans ${fmtDur(SUPPLY_RETRY_MS)}`); return null; });
+    if (!sup) continue; // les colonies suivantes sont quand même servies
+    supplyKo.delete(p.id);
+    alert(`📦 SUPPLY ${what}${sup.note ? `\n${sup.note}` : ""}\n${fleetResultStr(sup.res)}`);
+    // État local recalé jusqu'au prochain poll (collect / autobuild du même tick) ; carburant inconnu → non décompté
+    for (const k of RES_KEYS) pere.resources[k] -= cargo[k];
+    for (const [k, n] of Object.entries(ships)) pere.ships[k] -= n;
+    s.fleetSlots.used++;
   }
 }
 
 // ---------- 3. Collecte colonies → Père (BetweenLands déborde) ----------
 let lastCollect = 0;
+/** Ce que collect ramènerait de p (null = pas de déclenchement). Ravitaillement actif : niveau gardé = max(COLLECT_KEEP × capacité, cible supply)
+ *  et déclenchement seulement s'il y a un vrai excédent au-dessus → jamais d'aller-retour avec supply. Ravitaillement off : inchangé. */
+export function collectWant(p: Planet, supplyOn = flags.supply): Res | null {
+  const t = supplyOn ? supplyTarget(p.id) : undefined;
+  const base = (k: keyof Res) => Math.max(COLLECT_KEEP * p.capacities[k], t?.[k] ?? 0);
+  const reserve = (k: keyof Res) => (k === "deuterium" ? DEUT_RESERVE : 0);
+  const over = (Object.keys(p.resources) as (keyof Res)[]).some((k) => p.capacities[k] > 0 && p.resources[k] > COLLECT_THRESHOLD * p.capacities[k]
+    && (!t || p.resources[k] > base(k) + reserve(k)));
+  if (!over) return null;
+  const excess = (k: keyof Res) => Math.max(0, Math.floor(p.resources[k] - base(k)));
+  return { metal: excess("metal"), crystal: excess("crystal"), deuterium: Math.max(0, excess("deuterium") - DEUT_RESERVE) };
+}
 async function collect(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
   if (!pere || threatened.has(PERE)) return;
   for (const p of s.planets) {
     if (p.id === PERE || threatened.has(p.id)) continue;
-    const over = (Object.keys(p.resources) as (keyof Res)[]).some((k) => p.capacities[k] > 0 && p.resources[k] > COLLECT_THRESHOLD * p.capacities[k]);
-    if (!over) continue;
+    const want = collectWant(p);
+    if (!want) continue;
     if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && f.origin?.planetId === p.id && same(f.target?.coords, pere.coords))) continue;
-    const excess = (k: keyof Res) => Math.max(0, Math.floor(p.resources[k] - COLLECT_KEEP * p.capacities[k]));
-    const want: Res = { metal: excess("metal"), crystal: excess("crystal"), deuterium: Math.max(0, excess("deuterium") - DEUT_RESERVE) };
     const total = want.metal + want.crystal + want.deuterium;
     if (total < COLLECT_MIN_SEND) continue;
     // Transporteurs sur place : GT d'abord, PT en complément

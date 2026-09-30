@@ -1,4 +1,4 @@
-// Veille des caches pirates (T0/T1/T2 ↔ presets /p0 /p1 /p2) et convois : toutes les PIRATE_CHECK_MS, un seul GET /galaxy/carte ;
+// Veille des caches pirates (T0/T1/T2/T3 ↔ presets /p0 /p1 /p2 /p3) et convois : toutes les PIRATE_CHECK_MS, un seul GET /galaxy/carte ;
 // quand le nombre de pirates d'un système change (ou au démarrage), on lit ce système et on notifie les nouvelles caches.
 // Formes [TESTÉ 21/09] : carte.systemes[].pirates (nombre) ; /galaxy?system=N → slots[].pirate = { nom, tier, expireA, maitrise, boss? }
 // et slots[].convoi = { tier, epave, total, … } [BUNDLE].
@@ -15,7 +15,7 @@ const known = new Map<string, Pirate>(); // "sys:pos:expireA" → cache vue
 let started = false;
 
 const key = (p: Pirate) => `${p.system}:${p.position}:${p.expireA ?? ""}`;
-export const presetFor = (tier?: string) => tier === "T0" ? "/p0" : tier === "T1" ? "/p1" : tier === "T2" ? "/p2" : null;
+export const presetFor = (tier?: string) => tier === "T0" ? "/p0" : tier === "T1" ? "/p1" : tier === "T2" ? "/p2" : tier === "T3" ? "/p3" : null;
 const fromSlot = (system: number, sl: GalaxySlot): Pirate | null =>
   sl.pirate ? { system, position: sl.position, nom: sl.pirate.nom ?? "Cache pirate", tier: sl.pirate.tier ?? "?", expireA: sl.pirate.expireA, maitrise: sl.pirate.maitrise, boss: sl.pirate.boss, kind: "pirate", raw: sl.pirate }
   : sl.convoi ? { system, position: sl.position, nom: sl.convoi.epave ? "Épave" : "Convoi pirate", tier: sl.convoi.tier ?? "?", kind: "convoi", raw: sl.convoi } : null;
@@ -24,7 +24,7 @@ export function pirateLine(p: Pirate, now: number) {
   const preset = presetFor(p.tier);
   return `☠ ${p.nom} ${p.tier}${p.boss ? " (boss)" : ""} en ${p.system}:${p.position}` +
     (p.expireA ? ` · expire dans ${fmtDur(p.expireA - now)}` : "") + (p.maitrise ? " · échelon déjà maîtrisé" : "") +
-    (preset && !p.maitrise ? `\n   → ${preset} under|over|trio ${p.system}:${p.position}` : "");
+    (preset && !p.maitrise ? `\n   → ${preset}${p.tier === "T3" ? "" : p.tier === "T0" ? " under|over" : " under|over|trio"} ${p.system}:${p.position}` : "");
 }
 
 /** Relève les caches d'un système (appel direct : on veut du frais quand le compte a changé). */
@@ -64,9 +64,19 @@ export async function piratesTick(s: State) {
   }
 }
 
-export function piratesSummary(s: State): string {
-  const all = [...known.values()].sort((a, b) => a.system - b.system || a.position - b.position);
-  if (!all.length) return `Aucune cache pirate connue (dernier relevé il y a ${fmtDur(Date.now() - lastCheck)}).`;
-  return [`☠ Caches pirates (${all.length}) — relevé il y a ${fmtDur(Date.now() - lastCheck)}`, ...all.map((p) => pirateLine(p, s.now))].join("\n");
+/** Filtre « p1 p3 » / « T1 » (casse libre) → tiers ["T1","T3"] ; argument inconnu → Error avec l'usage. */
+function parseTiers(args: string[]): string[] {
+  return [...new Set(args.map((a) => {
+    const m = /^[pt]([0-3])$/i.exec(a);
+    if (!m) throw new Error(`Filtre inconnu : ${a}\nUsage : /pirates [p0|p1|p2|p3] (plusieurs possibles, ex. /pirates p1 p3)`);
+    return `T${m[1]}`;
+  }))];
+}
+
+export function piratesSummary(s: State, filter: string[] = []): string {
+  const tiers = parseTiers(filter), lab = tiers.length ? ` ${tiers.join("/")}` : "";
+  const all = [...known.values()].filter((p) => !tiers.length || tiers.includes(p.tier)).sort((a, b) => a.system - b.system || a.position - b.position);
+  if (!all.length) return `Aucune cache pirate${lab} connue (dernier relevé il y a ${fmtDur(Date.now() - lastCheck)}).`;
+  return [`☠ Caches pirates${lab} (${all.length}) — relevé il y a ${fmtDur(Date.now() - lastCheck)}`, ...all.map((p) => pirateLine(p, s.now))].join("\n");
 }
 export const knownPirateAt = (system: number, position: number) => [...known.values()].find((p) => p.system === system && p.position === position);

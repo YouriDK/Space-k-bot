@@ -51,7 +51,7 @@ export function setFlag(k: keyof Flags, v: boolean) { flags[k] = v; log("FLAG", 
 export function pause() { if (!pausedFrom) pausedFrom = { ...flags }; (Object.keys(flags) as (keyof Flags)[]).forEach((k) => (flags[k] = false)); log("PAUSE"); persistFlags(); return getFlags(); }
 export function resume() { if (pausedFrom) Object.assign(flags, pausedFrom); pausedFrom = null; log("RESUME", flags); persistFlags(); return getFlags(); }
 export const flagsStr = (f: Flags) =>
-  `save ${f.save ? "ARMÉ 🔴" : "observation"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
+  `save ${f.save ? "ARMÉ 🔴" : "observation"} · ravitaillement auto ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
 
 // ---------- Outils ----------
 export const api = new SpaceK();

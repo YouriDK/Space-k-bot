@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
+  CARGO, DEUT_RESERVE, PERE, SUPPLY_TARGET, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -239,6 +239,7 @@ function planSupply(s: State, to: string, want: Res): { plans: FleetPlan[]; note
   if (!plans.length) throw new Error("Aucun transporteur sur Père");
   return { plans, notes };
 }
+const supplyTargetStr = () => `${SUPPLY_TARGET.metal / 1000}k M / ${SUPPLY_TARGET.crystal / 1000}k C / ${SUPPLY_TARGET.deuterium / 1000}k D`;
 const coordsOf = (s: State, q: string) => { try { return planetOrThrow(s, q).coords; } catch { return parseCoords(q); } };
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
@@ -254,7 +255,7 @@ Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
 /status — ressources, slots, flottes, menaces, latence
 /flotte — mes vaisseaux par planète + flottes en vol
 /threats — menaces en approche
-/pirates — caches pirates T0/T1/T2 connues, avec le preset conseillé
+/pirates [p1|p2|p3] — caches pirates connues (filtrables par niveau), avec le preset conseillé
 /joueur <nom> — planètes, rang et puissance d'un joueur
 /next — mettre une construction en attente : elle part dès que la file se libère (même la nuit)
 /next <planète> labo — pareil pour la recherche (bouton 🔬 aussi dans la liste de la planète)
@@ -291,6 +292,7 @@ Refus clair si limite 24 h, simultané ou système saturé.
 /supply <planète> <métal> <cristal> <deut> — en milliers
 Ex. : /supply fils 40 14 90 → 40 000 M, 14 000 C, 90 000 D
 PT d'abord (rapides), GT en complément dans une 2e flotte.
+/autosupply on|off — ravitaillement auto : dès qu'une colonie passe sous ${supplyTargetStr()}, Père envoie de quoi la remettre à niveau (au millier près)
 
 ━━━━━━━━━━━━━━━━━━━━
 🏗 AUTO-CONSTRUCTION (par planète)
@@ -319,13 +321,13 @@ Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire
 /token <refresh_token> — renouvelle le token Keycloak (tous les 7 j max)
 /help full — commandes génériques (/send, /transport, /deploy, /spy, /build, /research, /ships, /cancel, /efficiency)
 
-🔔 Notifications automatiques : 🏴‍☠️ nouvelle cache pirate (T0→/p0, T1→/p1, T2→/p2) · bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
+🔔 Notifications automatiques : 🏴‍☠️ nouvelle cache pirate (T0→/p0, T1→/p1, T2→/p2, T3→/p3) · bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
 
 const HELP_FULL = `Lecture
-/status · /planets · /fleets · /threats · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
+/status · /planets · /fleets · /threats · /pirates [p1|p2|p3] · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
 
 Actions (confirmation ✅/❌)
-/p0 · /p1 · /p2 <variante> <sys:pos>   (variantes : ${Object.entries(PRESETS).map(([g, v]) => `${g}: ${Object.keys(v).join("|")}`).join(" · ")})
+/p0 · /p1 · /p2 <variante> <sys:pos> · /p3 <sys:pos>   (variantes : ${Object.entries(PRESETS).map(([g, v]) => `${g}: ${Object.keys(v).join("|")}`).join(" · ")} ; p3 : variante facultative)
 /scan_<joueur> · /scan <joueur>
 /explo opti <h> · /explo 911 [h]
 /send <planète> <mission> <sys:pos|planète> <k=n,k=n> [m=… c=… d=… speed=…]
@@ -337,7 +339,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /collect on|off · /autobuild <planète> on|off · /pause · /resume
+/save on|off · /autosupply on|off · /collect on|off · /autobuild <planète> on|off · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
@@ -364,11 +366,12 @@ async function handle(text: string, chatId: string) {
       send(`🔭 Recherche de ${q}…`, chatId);
       return send(playerSummary(await findPlayer(q), q), chatId);
     }
-    case "/p0": case "/p1": {
-      // /p0 under 12:9 · /p1 opti_over 12:9 — toujours depuis Père, rallier ✔, cible vérifiée dans la galaxie
-      need(args, 2, `${cmd} <${Object.keys(PRESETS[cmd.slice(1)]).join("|")}> <sys:pos>`);
+    case "/p0": case "/p1": case "/p2": case "/p3": {
+      // /p0 under 12:9 · /p1 opti_over 12:9 · /p3 12:9 (variante facultative si le groupe n'en a qu'une) — toujours depuis Père, rallier ✔, cible vérifiée dans la galaxie
+      const vs = Object.keys(PRESETS[cmd.slice(1)]), seule = vs.length === 1;
+      need(args, seule ? 1 : 2, `${cmd} ${seule ? "" : `<${vs.join("|")}> `}<sys:pos>`);
       const s = await getState();
-      return fleetAction(await planPreset(s, cmd.slice(1), args[0], args[1]));
+      return fleetAction(await planPreset(s, cmd.slice(1), args.length > 1 ? args[0] : undefined, args[args.length > 1 ? 1 : 0]));
     }
     case "/scan": {
       need(args, 1, "/scan <joueur>");
@@ -440,7 +443,7 @@ async function handle(text: string, chatId: string) {
     case "/planets": return send(await withState(planetsSummary), chatId);
     case "/fleets": return send(await withState(fleetsSummary), chatId);
     case "/threats": return send(await withState(threatsSummary), chatId);
-    case "/pirates": return send(await withState(piratesSummary), chatId);
+    case "/pirates": return send(await withState((s) => piratesSummary(s, args)), chatId);
     case "/presets": return send(presetsHelp(), chatId);
     case "/flags": return send(flagsStr(getFlags()), chatId);
 
@@ -457,12 +460,13 @@ async function handle(text: string, chatId: string) {
       return send([...out, ...notes].join("\n\n"), chatId);
     }
     case "/salvage": case "/recup_list": return send(await salvageSummary(await getState()), chatId);
-    case "/save": case "/supply_auto": case "/collect": case "/recycle": case "/recup": {
+    case "/save": case "/supply_auto": case "/autosupply": case "/collect": case "/recycle": case "/recup": {
       need(args, 1, `${cmd} on|off`);
       const v = /^(on|1|true)$/i.test(args[0]);
-      const key = (cmd === "/supply_auto" ? "supply" : cmd.slice(1)) as keyof Flags;
+      const key = (cmd === "/supply_auto" || cmd === "/autosupply" ? "supply" : cmd.slice(1)) as keyof Flags;
       const f = setFlag(key, v);
-      return send(`${key === "save" && v ? "🔴 FLEET-SAVE ARMÉ" : ""}\n${flagsStr(f)}`.trim(), chatId);
+      const head = key === "save" && v ? "🔴 FLEET-SAVE ARMÉ" : key === "supply" && v ? `📦 Ravitaillement auto : colonies maintenues à ${supplyTargetStr()} depuis Père` : "";
+      return send(`${head}\n${flagsStr(f)}`.trim(), chatId);
     }
     case "/pause": return send(`⏸ Pause\n${flagsStr(pause())}`, chatId);
     case "/resume": return send(`▶️ Reprise\n${flagsStr(resume())}`, chatId);
