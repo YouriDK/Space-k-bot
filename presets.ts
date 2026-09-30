@@ -41,9 +41,15 @@ const compoText = (p: Preset) => [
   ...Object.entries(p.ships).map(([k, n]) => `${n} ${SHIP_FR[k] ?? k}`),
   ...(p.all ?? []).map((k) => `tous les ${SHIP_FR[k] ?? k}`)].join(" + ");
 
-export const presetsHelp = () =>
-  Object.entries(PRESETS).map(([g, vs]) => [`▸ /${g}`, ...Object.entries(vs).map(([v, p]) =>
-    `   /${g}${Object.keys(vs).length > 1 ? ` ${v}` : ""} <sys:pos>\n      ${compoText(p)}`)].join("\n")).join("\n\n");
+/** Un groupe de presets : titre + une entrée par variante (commande et composition). Source unique de /presets, /help et /tips. */
+export const presetGroupHelp = (g: string) => {
+  const vs = PRESETS[g.toLowerCase()];
+  if (!vs) throw new Error(`Preset inconnu : ${g} (dispo : ${Object.keys(PRESETS).join(", ")})`);
+  return [`▸ /${g}`, ...Object.entries(vs).map(([v, p]) =>
+    `   /${g}${Object.keys(vs).length > 1 ? ` ${v}` : ""} <sys:pos>\n      ${compoText(p)}`)].join("\n");
+};
+
+export const presetsHelp = () => Object.keys(PRESETS).map(presetGroupHelp).join("\n\n");
 
 /** Vérifie la cible dans la galaxie (position 1–15, planète présente, pas à nous) puis prépare l'attaque. */
 export async function planPreset(s: State, group: string, variant: string | undefined, pos: string, speedPercent = 100): Promise<FleetPlan> {

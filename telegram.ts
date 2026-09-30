@@ -12,6 +12,7 @@ import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
+import { tipFor, tipsIndex } from "./tips.ts";
 import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
@@ -247,6 +248,7 @@ const need = (toks: string[], n: number, usage: string) => { if (toks.length < n
 // Commandes courtes (les tiennes) — attaques, scans et expéditions partent toujours de Père
 const helpText = () => `📖 COMMANDES SPACE-K BOT
 Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
+👉 /tips — liste courte de toutes les commandes · /tips <commande> — le détail d'une commande (ex. /tips pirates, /tips p1)
 <planète> = pere · fils · oncle · cousin · bl (ou id pl_xx, ou coords 6:7)
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -309,7 +311,7 @@ PT d'abord (rapides), GT en complément dans une 2e flotte.
 /autobuild <planète> off — désactive
 /autobuild <planète> — état
 /autobuild off — désactive toutes les planètes
-Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire > fusion > cristal > deut > métal > silo > hangars. Pas les sous ou énergie négative → suivant. 2 min de délai après chaque fin.
+Objectifs dans l'ordre : robots 12 > labo 10 > chantier 8 > mines 20 (métal, cristal, deut) > silo 5. Pas les sous → suivant ; réservoir plein → on l'agrandit avant la mine ; énergie qui passerait en négatif → centrale d'abord. 2 min de délai après chaque fin. Détail : /plan
 
 ━━━━━━━━━━━━━━━━━━━━
 🛡 DÉFENSE AUTO
@@ -331,7 +333,9 @@ Paliers 5 → 7 → 9 → 10 puis +1, ordre : robots > chantier > labo > solaire
 
 🔔 Notifications automatiques : 🏴‍☠️ nouvelle cache pirate (T0→/p0, T1→/p1, T2→/p2, T3→/p3) · bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
 
-const HELP_FULL = `Lecture
+const HELP_FULL = `/tips — liste courte de toutes les commandes · /tips <commande> — le détail d'une commande
+
+Lecture
 /status · /planets · /fleets · /threats · /pirates [p1|p2|p3] · /presets · /flags · /flotte · /joueur <nom> · /plan · /batiments <planète>
 
 Actions (confirmation ✅/❌)
@@ -367,6 +371,7 @@ async function handle(text: string, chatId: string) {
 
   switch (cmd) {
     case "/help": case "/start": return send(args[0] === "full" ? HELP_FULL : helpText(), chatId);
+    case "/tips": case "/tip": return send(args.length ? tipFor(args[0]) : tipsIndex(), chatId);
     case "/flotte": case "/flottes": return send(await withState(shipsSummary), chatId);
     case "/joueur": case "/player": {
       need(args, 1, "/joueur <nom>");
@@ -556,7 +561,7 @@ async function handle(text: string, chatId: string) {
     }
     default:
       if (cmd.startsWith("/scan_")) return scanPlayer(cmdRaw.replace(/@.*$/, "").slice(6), chatId); // /scan_2003CP0 (casse d'origine)
-      return send(`Commande inconnue : ${cmd}\n/help pour la liste`, chatId);
+      return send(`Commande inconnue : ${cmd}\n/tips pour la liste courte · /help pour l'aide complète`, chatId);
   }
 }
 

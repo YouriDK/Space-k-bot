@@ -127,6 +127,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/pause`
 | `core.ts` | Client, flags, log/notification, santé, `prepareFleet`/`sendFleet`, helpers |
 | `threats.ts` | Parsing de `menaces`/`incoming`/`alertesVives` (format du bundle) |
 | `bot.ts` | Boucle de poll, fleet-save par planète, collect, capture de données, résumés |
+| `tips.ts` | `/tips` : index court des commandes et fiche détaillée par commande (flottes des presets lues dans `PRESETS`) |
 | `presets.ts` | Raids `/p0` `/p1` `/p2` `/p3` (validation de la cible dans la galaxie) |
 | `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
 | `expedition.ts` | `/explo opti` et `/explo 911` |
@@ -277,6 +278,8 @@ Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémar
 ## Telegram
 
 Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vide → le bot répond « ton chat id est X » et n'exécute rien.
+
+**Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
 `/autobuild …` · `/autosupply …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
