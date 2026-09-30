@@ -175,15 +175,15 @@ Jamais depuis/vers une planète menacée, pas de doublon.
 | `/p0 over <sys:pos>` | 9 croiseurs + 10 GT |
 | `/p0 opti_under <sys:pos>` | 11 éclaireurs |
 | `/p0 opti_over <sys:pos>` | 13 éclaireurs |
-| `/p1 under <sys:pos>` | 50 croiseurs + 30 GT |
-| `/p1 over <sys:pos>` | 30 croiseurs + 30 GT |
+| `/p1 under <sys:pos>` | 30 croiseurs + 30 GT |
+| `/p1 over <sys:pos>` | 50 croiseurs + 30 GT |
 | `/p1 trio <sys:pos>` | 50 croiseurs + 30 GT |
-| `/p1 opti_under <sys:pos>` | 20 croiseurs + 32 éclaireurs |
-| `/p1 opti_over <sys:pos>` | 10 croiseurs + 32 éclaireurs |
+| `/p1 opti_under <sys:pos>` | 10 croiseurs + 32 éclaireurs |
+| `/p1 opti_over <sys:pos>` | 20 croiseurs + 32 éclaireurs |
 | `/p1 opti_trio <sys:pos>` | 5 croiseurs + 32 éclaireurs (la 2e ligne « trio » de la spec) |
 | `/p2 trio <sys:pos>` | 110 croiseurs + 40 GT + 10 éclaireurs + 2 VB |
-| `/p2 under <sys:pos>` | 160 croiseurs + 50 GT + 50 éclaireurs |
-| `/p2 over <sys:pos>` | 140 croiseurs + 50 GT + 50 éclaireurs |
+| `/p2 under <sys:pos>` | 140 croiseurs + 50 GT + 50 éclaireurs |
+| `/p2 over <sys:pos>` | 160 croiseurs + 50 GT + 50 éclaireurs |
 | `/p3 <sys:pos>` (ou `/p3 tout <sys:pos>`) | **dynamique** : jusqu'à 150 GT + tous les croiseurs, éclaireurs, VB et traqueurs à quai sur Père |
 
 `/p3` (caches T3) calcule la flotte au moment de la commande d'après ce qui est à quai sur Père ; les vaisseaux lents (bombardiers, destructeurs, recycleurs…) restent à quai.

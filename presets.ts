@@ -7,6 +7,7 @@ import { galaxySystemCached } from "./scan.ts";
 
 // ships = quantités fixes · max = « jusqu'à N » (borné par ce qui est à quai sur Père) · all = « tout ce qui est à quai » (résolus dans planPreset)
 export type Preset = { ships: Record<string, number>; rallier: boolean; max?: Record<string, number>; all?: string[] };
+// Convention : « over » envoie toujours plus de vaisseaux que « under ».
 export const PRESETS: Record<string, Record<string, Preset>> = {
   p0: {
     under:      { ships: { cruiser: 7, largeCargo: 10 }, rallier: true },
@@ -15,19 +16,19 @@ export const PRESETS: Record<string, Record<string, Preset>> = {
     opti_over:  { ships: { pathfinder: 13 }, rallier: true },
   },
   p1: {
-    under:      { ships: { cruiser: 50, largeCargo: 30 }, rallier: true },
-    over:       { ships: { cruiser: 30, largeCargo: 30 }, rallier: true },
+    under:      { ships: { cruiser: 30, largeCargo: 30 }, rallier: true },
+    over:       { ships: { cruiser: 50, largeCargo: 30 }, rallier: true },
     trio:       { ships: { cruiser: 50, largeCargo: 30 }, rallier: true },
-    opti_under: { ships: { cruiser: 20, pathfinder: 32 }, rallier: true },
-    opti_over:  { ships: { cruiser: 10, pathfinder: 32 }, rallier: true },
+    opti_under: { ships: { cruiser: 10, pathfinder: 32 }, rallier: true },
+    opti_over:  { ships: { cruiser: 20, pathfinder: 32 }, rallier: true },
     // L'utilisateur a écrit deux fois « trio » (50 croiseurs + 30 GT, puis 5 croiseurs + 32 éclaireurs) :
     // la seconde suit la série opti_* → nommée opti_trio.
     opti_trio:  { ships: { cruiser: 5, pathfinder: 32 }, rallier: true },
   },
   p2: {
     trio:  { ships: { cruiser: 110, largeCargo: 40, pathfinder: 10, battleship: 2 }, rallier: true },
-    under: { ships: { cruiser: 160, largeCargo: 50, pathfinder: 50 }, rallier: true },
-    over:  { ships: { cruiser: 140, largeCargo: 50, pathfinder: 50 }, rallier: true },
+    under: { ships: { cruiser: 140, largeCargo: 50, pathfinder: 50 }, rallier: true },
+    over:  { ships: { cruiser: 160, largeCargo: 50, pathfinder: 50 }, rallier: true },
   },
   // Caches T3 : composition dynamique — on laisse les vaisseaux lents (bombardiers, destructeurs, recycleurs…)
   p3: {
