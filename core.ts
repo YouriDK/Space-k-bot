@@ -1,4 +1,4 @@
-// Noyau partagé par tous les modules (bot, presets, scan, expedition, notify, autobuild, telegram) :
+// Noyau partagé par tous les modules (bot, presets, scan, expedition, notify, autobuild, supply, telegram) :
 // client API, flags, log/notification, santé, helpers de flotte. Aucune logique de boucle ici.
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { SpaceK, type Coords, type Fleet, type Mission, type Res, type State, planetByName } from "./spacek-client.ts";
@@ -27,19 +27,24 @@ export const SHIP_FR: Record<string, string> = {
 // ---------- Flags (modifiables à chaud depuis Telegram) ----------
 // Persistés dans flags.json : ce qui est réglé sur Telegram survit aux redémarrages (pm2, reboot, déploiement).
 // Le .env ne sert qu'au tout premier démarrage (pas encore de flags.json).
-export type Flags = { save: boolean; supply: boolean; collect: boolean; autobuild: boolean; recycle: boolean; recup: boolean };
+// Ravitaillement auto : pas de flag, activation PAR COLONIE (supply.json) ; suspendu par /pause via isPaused().
+export type Flags = { save: boolean; collect: boolean; autobuild: boolean; recycle: boolean; recup: boolean };
 const FLAGS_FILE = "flags.json";
 export const flags: Flags = {
   // autobuild : pas d'interrupteur global, l'activation est PAR PLANÈTE (build-plan.json) ; ce flag ne sert qu'à /pause /resume
-  save: bool("SAVE_ARMED"), supply: bool("SUPPLY_ENABLED"), collect: bool("COLLECT_ENABLED"), autobuild: bool("AUTOBUILD_ENABLED", true),
+  save: bool("SAVE_ARMED"), collect: bool("COLLECT_ENABLED"), autobuild: bool("AUTOBUILD_ENABLED", true),
   recycle: bool("RECYCLE_ENABLED"), recup: bool("RECUP_ENABLED"),
 };
+const FLAG_DEFAULTS: Flags = { ...flags };
+/** Ne garde que les clés connues (un ancien flags.json peut contenir `supply`, y compris dans pausedFrom). */
+const knownFlags = (o: any): Partial<Flags> =>
+  Object.fromEntries((Object.keys(FLAG_DEFAULTS) as (keyof Flags)[]).filter((k) => typeof o?.[k] === "boolean").map((k) => [k, o[k]]));
 let pausedFrom: Flags | null = null;
 try {
   if (existsSync(FLAGS_FILE)) {
     const saved = JSON.parse(readFileSync(FLAGS_FILE, "utf8"));
-    for (const k of Object.keys(flags) as (keyof Flags)[]) if (typeof saved[k] === "boolean") flags[k] = saved[k];
-    if (saved.pausedFrom) pausedFrom = saved.pausedFrom;
+    Object.assign(flags, knownFlags(saved));
+    if (saved.pausedFrom) pausedFrom = { ...FLAG_DEFAULTS, ...knownFlags(saved.pausedFrom) };
   }
 } catch (e: any) { console.error("flags.json illisible :", e.message); }
 function persistFlags() {
@@ -47,11 +52,12 @@ function persistFlags() {
   catch (e: any) { log("flags.json KO :", e.message); }
 }
 export const getFlags = (): Flags => ({ ...flags });
+export const isPaused = () => pausedFrom !== null; // /pause en cours (sert aux automatismes sans flag : ravitaillement auto)
 export function setFlag(k: keyof Flags, v: boolean) { flags[k] = v; log("FLAG", k, "=", v); persistFlags(); return getFlags(); }
 export function pause() { if (!pausedFrom) pausedFrom = { ...flags }; (Object.keys(flags) as (keyof Flags)[]).forEach((k) => (flags[k] = false)); log("PAUSE"); persistFlags(); return getFlags(); }
 export function resume() { if (pausedFrom) Object.assign(flags, pausedFrom); pausedFrom = null; log("RESUME", flags); persistFlags(); return getFlags(); }
 export const flagsStr = (f: Flags) =>
-  `save ${f.save ? "ARMÉ 🔴" : "observation"} · ravitaillement auto ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
+  `save ${f.save ? "ARMÉ 🔴" : "observation"} · ravitaillement auto ${pausedFrom ? "EN PAUSE" : "par planète (/autosupply)"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
 
 // ---------- Outils ----------
 export const api = new SpaceK();

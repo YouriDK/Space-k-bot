@@ -29,7 +29,6 @@ if [ ! -f .env ]; then
 TG_TOKEN=
 TG_CHAT_ID=
 SAVE_ARMED=false
-SUPPLY_ENABLED=false
 COLLECT_ENABLED=false
 AUTOBUILD_ENABLED=false
 HEARTBEAT_H=6

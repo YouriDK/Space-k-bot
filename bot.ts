@@ -1,13 +1,14 @@
-// Bot Space-K — cœur : boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés.
+// Bot Space-K — cœur : boucle de poll, fleet-save par planète, collect, capture de données, résumés (l'auto-ravitaillement vit dans supply.ts).
 //   npx tsx --env-file=.env bot.ts watch     → boucle complète (selon flags)
 //   npx tsx --env-file=.env bot.ts status    → résumé texte
-// Modules : core.ts (client, flags, helpers) · threats.ts · presets.ts · scan.ts · expedition.ts · notify.ts · autobuild.ts
+// Modules : core.ts (client, flags, helpers) · threats.ts · presets.ts · scan.ts · expedition.ts · notify.ts · autobuild.ts · nextbuild.ts
+//           supply.ts (auto-ravitaillement par colonie) · pirates.ts · salvage.ts
 //
-// Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / SUPPLY_ENABLED / COLLECT_ENABLED / AUTOBUILD_ENABLED = false) :
-// le bot calcule, logue et notifie ce qu'il ferait, mais n'émet aucun POST automatique.
+// Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / COLLECT_ENABLED = false) : le bot calcule, logue et notifie ce qu'il ferait,
+// mais n'émet aucun POST automatique. Auto-construction et auto-ravitaillement : désactivés tant qu'aucune planète n'est activée.
 import type { Coords, Fleet, Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, etaStr, fillCargo, flags, fleetResultStr, fmt, fmtDur, fmtNum, getFlags,
+  PERE, CARGO, NEVER_FLY, DEUT_RESERVE, api, alert, appendJsonl, capacity, etaStr, fillCargo, flags, fleetResultStr, fmt, getFlags,
   getHealth, getState, log, num, recordError, resStr, roundRes, same, sendFleetFuelSafe, shipsStr, sleep, xy,
 } from "./core.ts";
 import { parseThreats, threatDesc, threatLabel, threatenedPlanetIds, triggersSave, type Threat } from "./threats.ts";
@@ -16,22 +17,12 @@ import { autobuildTick } from "./autobuild.ts";
 import { piratesTick } from "./pirates.ts";
 import { salvageTick } from "./salvage.ts";
 import { nextBuildTick } from "./nextbuild.ts";
+import { supplyEnabled, supplyTarget, supplyTick } from "./supply.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
 
 // ================= CONFIG =================
-// Ravitaillement auto : toute colonie (≠ Père) est complétée depuis Père jusqu'à SUPPLY_TARGET (au millier près, sans plafond de capacité :
-// le transport peut dépasser la capacité). SUPPLY = surcharge par planète, fusionnée sur la cible par défaut.
-export const SUPPLY_TARGET: Res = {
-  metal: num("SUPPLY_TARGET_METAL", 500_000), crystal: num("SUPPLY_TARGET_CRYSTAL", 350_000), deuterium: num("SUPPLY_TARGET_DEUT", 150_000),
-};
-export const SUPPLY: Record<string, Partial<Res>> = {
-  // pl_rn: { metal: 100_000, crystal: 50_000, deuterium: 20_000 },  // Planète Fils
-};
-export const supplyTarget = (planetId: string): Res => ({ ...SUPPLY_TARGET, ...SUPPLY[planetId] });
-const SUPPLY_EVERY_MS = 60_000;
-const SUPPLY_MIN_SEND = num("SUPPLY_MIN_SEND", 20_000); // pas de vol pour moins que ça
-const SUPPLY_RETRY_MS = 15 * 60_000;  // après un envoi refusé par le jeu, délai avant de réessayer vers la même colonie
+const SUPPLY_TICK_MS = 60_000; // évaluation de l'auto-ravitaillement (chaque colonie active n'est servie qu'à son échéance, supply.ts)
 const COLLECT_EVERY_MS = 60_000;
 const COLLECT_THRESHOLD = num("COLLECT_THRESHOLD", 0.9); // déclenche quand une ressource dépasse 90 % de la capacité
 const COLLECT_KEEP = num("COLLECT_KEEP", 0.5);           // …et ramène le stock à 50 % (évite un vol toutes les minutes)
@@ -122,78 +113,14 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
   // Si on avait déjà décollé, le rappel se fait à recallAt comme prévu.
 }
 
-// ---------- 2. Ravitaillement auto depuis Père ----------
-const RES_KEYS: (keyof Res)[] = ["metal", "crystal", "deuterium"];
-const resFmt = (r: Res) => `M ${fmtNum(r.metal)} · C ${fmtNum(r.crystal)} · D ${fmtNum(r.deuterium)}`;
-export type SupplyStep = { p: Planet; ships: Record<string, number>; cargo: Res; skip?: string };
-/** Calcul pur d'un passage (aucun POST) : manque = cible − stock arrondi au millier supérieur, don de Père au millier inférieur
- *  (deut : au-delà de DEUT_RESERVE). Les colonies se partagent stock, transporteurs et slots de Père (copies locales décrémentées). */
-export function planSupplyAuto(s: State, threatened: Set<string>): SupplyStep[] {
-  const pere = s.planets.find((p) => p.id === PERE);
-  if (!pere || threatened.has(PERE)) return [];
-  const stock: Res = { ...pere.resources }, quai: Record<string, number> = { ...pere.ships }, steps: SupplyStep[] = [];
-  let used = s.fleetSlots.used;
-  for (const p of s.planets) {
-    if (p.id === PERE || threatened.has(p.id)) continue; // jamais vers une planète menacée
-    if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && same(f.target?.coords, p.coords))) continue;
-    const t = supplyTarget(p.id);
-    const need = (k: keyof Res) => Math.ceil(Math.max(0, t[k] - Math.floor(p.resources[k])) / 1000) * 1000; // pas de plafond de capacité
-    const dispo = (k: keyof Res) => Math.floor(Math.max(0, stock[k] - (k === "deuterium" ? DEUT_RESERVE : 0)) / 1000) * 1000;
-    let cargo: Res = { metal: Math.min(need("metal"), dispo("metal")), crystal: Math.min(need("crystal"), dispo("crystal")), deuterium: Math.min(need("deuterium"), dispo("deuterium")) };
-    const total = cargo.metal + cargo.crystal + cargo.deuterium;
-    if (total < SUPPLY_MIN_SEND) continue;
-    // Transporteurs à quai sur Père : GT d'abord, PT en complément, une seule flotte
-    const ships: Record<string, number> = {};
-    let cap = 0;
-    for (const k of ["largeCargo", "smallCargo"]) {
-      const n = Math.min(quai[k] ?? 0, Math.ceil(Math.max(0, total - cap) / CARGO[k]));
-      if (n > 0) { ships[k] = n; cap += n * CARGO[k]; }
-    }
-    if (!cap) { steps.push({ p, ships, cargo, skip: "aucun transporteur à quai sur Père" }); continue; }
-    if (used >= s.fleetSlots.total) { steps.push({ p, ships, cargo, skip: `aucun slot libre (${used}/${s.fleetSlots.total})` }); break; }
-    if (cap < total) cargo = fillCargo(cargo, cap, 0); // soute insuffisante : on réduit (priorité deut > cristal > métal), le reste au passage suivant
-    steps.push({ p, ships, cargo });
-    used++;
-    for (const k of RES_KEYS) stock[k] -= cargo[k];
-    for (const [k, n] of Object.entries(ships)) quai[k] -= n;
-  }
-  return steps;
-}
-
+// ---------- 2. Ravitaillement auto depuis Père : supply.ts ----------
 let lastSupply = 0;
-const supplyLogged = new Map<string, string>(); // planetId → dernière ligne logguée (observation / blocage) : pas la même toutes les 60 s
-const supplyKo = new Map<string, number>();     // planetId → dernier envoi refusé : on attend SUPPLY_RETRY_MS avant de réessayer
-async function supply(s: State, threatened: Set<string>) {
-  const pere = s.planets.find((p) => p.id === PERE);
-  if (!pere || threatened.has(PERE)) return;
-  const steps = planSupplyAuto(s, threatened);
-  for (const id of [...supplyLogged.keys()]) if (!steps.some((st) => st.p.id === id)) supplyLogged.delete(id); // plus de manque → on réarme
-  const once = (id: string, msg: string) => { if (supplyLogged.get(id) !== msg) { supplyLogged.set(id, msg); log(msg); } };
-  for (const { p, ships, cargo, skip } of steps) {
-    if (skip) { once(p.id, `SUPPLY ${p.name} : ${skip}`); continue; }
-    const what = `Père → ${p.name} : ${shipsStr(ships)} · ${resFmt(cargo)}`;
-    if (!flags.supply) { once(p.id, `[OBSERVATION] SUPPLY j'aurais envoyé ${what}`); continue; }
-    if (Date.now() - (supplyKo.get(p.id) ?? 0) < SUPPLY_RETRY_MS) continue; // envoi refusé récemment : pas de POST en boucle
-    supplyLogged.delete(p.id);
-    // Rattrapage carburant : deut réel de Père + métal/cristal prévus → la 2e tentative n'emporte jamais plus que prévu
-    const sup = await sendFleetFuelSafe({ planetId: PERE, mission: "transport", coords: xy(p.coords), ships, cargo, speedPercent: 100 },
-      { ...cargo, deuterium: pere.resources.deuterium }, capacity(ships), new Set(s.fleets.map((f) => f.id)))
-      .catch((e) => { supplyKo.set(p.id, Date.now()); alert(`📦 SUPPLY KO ${what}\n${e.message}\nNouvel essai dans ${fmtDur(SUPPLY_RETRY_MS)}`); return null; });
-    if (!sup) continue; // les colonies suivantes sont quand même servies
-    supplyKo.delete(p.id);
-    alert(`📦 SUPPLY ${what}${sup.note ? `\n${sup.note}` : ""}\n${fleetResultStr(sup.res)}`);
-    // État local recalé jusqu'au prochain poll (collect / autobuild du même tick) ; carburant inconnu → non décompté
-    for (const k of RES_KEYS) pere.resources[k] -= cargo[k];
-    for (const [k, n] of Object.entries(ships)) pere.ships[k] -= n;
-    s.fleetSlots.used++;
-  }
-}
 
 // ---------- 3. Collecte colonies → Père (BetweenLands déborde) ----------
 let lastCollect = 0;
-/** Ce que collect ramènerait de p (null = pas de déclenchement). Ravitaillement actif : niveau gardé = max(COLLECT_KEEP × capacité, cible supply)
- *  et déclenchement seulement s'il y a un vrai excédent au-dessus → jamais d'aller-retour avec supply. Ravitaillement off : inchangé. */
-export function collectWant(p: Planet, supplyOn = flags.supply): Res | null {
+/** Ce que collect ramènerait de p (null = pas de déclenchement). Ravitaillement actif SUR p : niveau gardé = max(COLLECT_KEEP × capacité, cible supply)
+ *  et déclenchement seulement s'il y a un vrai excédent au-dessus → jamais d'aller-retour avec supply. Ravitaillement off sur p : inchangé. */
+export function collectWant(p: Planet, supplyOn = supplyEnabled(p.id)): Res | null {
   const t = supplyOn ? supplyTarget(p.id) : undefined;
   const base = (k: keyof Res) => Math.max(COLLECT_KEEP * p.capacities[k], t?.[k] ?? 0);
   const reserve = (k: keyof Res) => (k === "deuterium" ? DEUT_RESERVE : 0);
@@ -256,7 +183,7 @@ export function statusSummary(s: State): string {
   const lines = [
     `Slots ${s.fleetSlots.used}/${s.fleetSlots.total} · ${s.fleets.length} flotte(s) en vol · ${threats.length} menace(s)` +
       (e ? ` · expé ${e.inFlight}/${e.slots} (${e.lanceesAujourdhui}/${e.maxPerPlayerPer24h} auj.)` : ""),
-    `Flags : save ${f.save ? "ARMÉ" : "observation"} · supply ${f.supply ? "on" : "off"} · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`,
+    `Flags : save ${f.save ? "ARMÉ" : "observation"} · autosupply ${s.planets.filter((p) => supplyEnabled(p.id)).length} colonie(s) · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`,
     `Latence /state ${h.avgLatencyMs} ms · ${h.polls} polls · ${h.errors} erreurs · uptime ${Math.round(h.uptimeMs / 60_000)} min`,
     ...s.planets.map((p) => `• ${p.name} ${fmt(p.coords)} — ${resStr(roundRes(p.resources))}${p.buildQueue ? ` 🏗 ${p.buildQueue.key} ${p.buildQueue.targetLevel}` : ""}${p.shipQueue ? ` 🚀 ${p.shipQueue.remaining} ${p.shipQueue.key}` : ""}`),
     s.player.researchQueue ? `🔬 ${s.player.researchQueue.key} niv. ${s.player.researchQueue.targetLevel} — fin dans ${Math.max(0, Math.round((s.player.researchQueue.finishesAt - s.now) / 60_000))} min` : "",
@@ -325,7 +252,7 @@ export async function watch() {
       await salvageTick(s).catch((e) => log("SALVAGE KO", e.message));
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
-      if (Date.now() - lastSupply > SUPPLY_EVERY_MS) { lastSupply = Date.now(); await supply(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
+      if (Date.now() - lastSupply > SUPPLY_TICK_MS) { lastSupply = Date.now(); await supplyTick(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
       await nextBuildTick(s).catch((e) => log("NEXT KO", e.message));
       await autobuildTick(s).catch((e) => alert("AUTOBUILD KO", e.message));

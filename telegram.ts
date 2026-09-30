@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, SUPPLY_TARGET, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
+  CARGO, DEUT_RESERVE, PERE, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -15,6 +15,7 @@ import { piratesSummary } from "./pirates.ts";
 import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
+import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
 import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
@@ -239,7 +240,6 @@ function planSupply(s: State, to: string, want: Res): { plans: FleetPlan[]; note
   if (!plans.length) throw new Error("Aucun transporteur sur Père");
   return { plans, notes };
 }
-const supplyTargetStr = () => `${SUPPLY_TARGET.metal / 1000}k M / ${SUPPLY_TARGET.crystal / 1000}k C / ${SUPPLY_TARGET.deuterium / 1000}k D`;
 const coordsOf = (s: State, q: string) => { try { return planetOrThrow(s, q).coords; } catch { return parseCoords(q); } };
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
@@ -292,7 +292,15 @@ Refus clair si limite 24 h, simultané ou système saturé.
 /supply <planète> <métal> <cristal> <deut> — en milliers
 Ex. : /supply fils 40 14 90 → 40 000 M, 14 000 C, 90 000 D
 PT d'abord (rapides), GT en complément dans une 2e flotte.
-/autosupply on|off — ravitaillement auto : dès qu'une colonie passe sous ${supplyTargetStr()}, Père envoie de quoi la remettre à niveau (au millier près)
+
+━━━━━━━━━━━━━━━━━━━━
+📦 AUTO-RAVITAILLEMENT (par colonie, toutes les ${SUPPLY_EVERY_H} h)
+━━━━━━━━━━━━━━━━━━━━
+/autosupply <planète> on — active la colonie (1er passage dans la minute)
+/autosupply <planète> off — désactive
+/autosupply <planète> — état : prochain passage, ce qui manque, ce qui partirait
+/autosupply — état de toutes les colonies · /autosupply off — désactive tout
+À chaque passage, Père complète la colonie jusqu'à ${supplyTargetStr()} (au millier près), GT puis PT.
 
 ━━━━━━━━━━━━━━━━━━━━
 🏗 AUTO-CONSTRUCTION (par planète)
@@ -339,7 +347,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /autosupply on|off · /collect on|off · /autobuild <planète> on|off · /pause · /resume
+/save on|off · /autosupply [<planète>] [on|off] · /collect on|off · /autobuild <planète> on|off · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
@@ -460,12 +468,35 @@ async function handle(text: string, chatId: string) {
       return send([...out, ...notes].join("\n\n"), chatId);
     }
     case "/salvage": case "/recup_list": return send(await salvageSummary(await getState()), chatId);
-    case "/save": case "/supply_auto": case "/autosupply": case "/collect": case "/recycle": case "/recup": {
+    case "/autosupply": case "/supply_auto": {
+      // /autosupply <planète…> on|off · /autosupply <planète…> (état) · /autosupply (tout) · /autosupply off (désactive tout). Pas d'interrupteur global.
+      const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
+      const asBool = (x: string) => /^(on|1|true)$/i.test(x);
+      const s = await getState();
+      if (!args.length) return send(supplySummary(s), chatId);
+      if (args.length === 1 && isOnOff(args[0])) {
+        if (asBool(args[0])) return send("L'auto-ravitaillement s'active par colonie : /autosupply fils on, /autosupply bl on…\n\n" + supplySummary(s), chatId);
+        for (const p of s.planets) if (supplyEnabled(p.id)) setSupplyEnabled(p.id, false);
+        return send("Auto-ravitaillement désactivé sur toutes les colonies.\n\n" + supplySummary(s), chatId);
+      }
+      const last = args[args.length - 1];
+      const p = planet(s, (isOnOff(last) ? args.slice(0, -1) : args).join(" "));
+      if (p.id === PERE) throw new Error(`${p.name} est la source du ravitaillement : active plutôt une colonie (/autosupply fils on)`);
+      if (isOnOff(last)) {
+        const on = asBool(last);
+        setSupplyEnabled(p.id, on);
+        const head = on ? `📦 Auto-ravitaillement ${p.name} : ON — complétée à ${supplyTargetStr()} toutes les ${SUPPLY_EVERY_H} h, 1er passage dans la minute`
+          : `Auto-ravitaillement ${p.name} : off`;
+        return send(`${head}\n\n${supplySummary(s, p)}`, chatId);
+      }
+      return send(supplySummary(s, p), chatId);
+    }
+    case "/save": case "/collect": case "/recycle": case "/recup": {
       need(args, 1, `${cmd} on|off`);
       const v = /^(on|1|true)$/i.test(args[0]);
-      const key = (cmd === "/supply_auto" || cmd === "/autosupply" ? "supply" : cmd.slice(1)) as keyof Flags;
+      const key = cmd.slice(1) as keyof Flags;
       const f = setFlag(key, v);
-      const head = key === "save" && v ? "🔴 FLEET-SAVE ARMÉ" : key === "supply" && v ? `📦 Ravitaillement auto : colonies maintenues à ${supplyTargetStr()} depuis Père` : "";
+      const head = key === "save" && v ? "🔴 FLEET-SAVE ARMÉ" : "";
       return send(`${head}\n${flagsStr(f)}`.trim(), chatId);
     }
     case "/pause": return send(`⏸ Pause\n${flagsStr(pause())}`, chatId);

@@ -99,7 +99,7 @@ Aucun bot Discord n'est nécessaire : le serveur reçoit un simple POST. **Seule
 | `.env` | Jetons, flags de départ, réglages (voir `.env.example`) — jamais commité |
 | `build-plan.json` | Objectifs d'auto-construction, activation par planète — rechargé à chaud |
 | `refresh_token.txt` | Jeton Keycloak, tourné automatiquement (`.bak` conservé) — jamais commité |
-| `flags.json`, `next-build.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
+| `flags.json`, `next-build.json`, `supply.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
 
 `HOME_PLANET` désigne la planète qui sert de hub (départ des raids, scans, expéditions et ravitaillements).
 Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous de `/api/state`.
@@ -116,22 +116,24 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 
 ## Fonctionnalités
 
-Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `SUPPLY_ENABLED`, `COLLECT_ENABLED`, `AUTOBUILD_ENABLED` sont à `false`.
+Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED` sont à `false`.
 Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
-Les flags se changent à chaud via Telegram (`/save on`, `/autosupply on`, `/collect on`, `/autobuild on`, `/pause`, `/resume`).
+Auto-construction et auto-ravitaillement n'ont pas de flag : ils s'activent planète par planète (`/autobuild <planète> on`, `/autosupply <planète> on`), rien n'est actif par défaut.
+Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/pause`, `/resume`) ; `/pause` suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
 
 ### Modules
 | Fichier | Rôle |
 |---|---|
 | `core.ts` | Client, flags, log/notification, santé, `prepareFleet`/`sendFleet`, helpers |
 | `threats.ts` | Parsing de `menaces`/`incoming`/`alertesVives` (format du bundle) |
-| `bot.ts` | Boucle de poll, fleet-save par planète, supply, collect, capture de données, résumés |
+| `bot.ts` | Boucle de poll, fleet-save par planète, collect, capture de données, résumés |
 | `presets.ts` | Raids `/p0` `/p1` `/p2` `/p3` (validation de la cible dans la galaxie) |
 | `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
 | `expedition.ts` | `/explo opti` et `/explo 911` |
 | `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
 | `nextbuild.ts` | `/next` : construction et recherche mises en attente |
+| `supply.ts` | Auto-ravitaillement par colonie depuis Père (`/autosupply`), échéances persistées dans `supply.json` |
 | `pirates.ts` | Veille des caches pirates (Telegram + Discord) |
 | `salvage.ts` | Débris (recycleurs) et cargaisons (éclaireurs) |
 | `discord.ts` | Webhook Discord (alertes pirates uniquement) |
@@ -157,11 +159,14 @@ Les flags se changent à chaud via Telegram (`/save on`, `/autosupply on`, `/col
 `/supply fils 40 14 90` → 40 000 métal, 14 000 cristal, 90 000 deut vers Fils (quantités en milliers ; `40k`, `1m`, ou brut ≥ 1000).
 - **PT d'abord** (22 000 de vitesse) dans une flotte à part, **GT en complément** dans une 2e flotte (dans une même flotte tout vole à la vitesse du plus lent). Un seul slot libre → envoi mixte avec avertissement.
 - Plafonné **uniquement** aux stocks de Père (garde `DEUT_RESERVE`) : pas de limite liée à la capacité de la planète de destination. Part immédiatement, récap ✅ par flotte.
-- **Auto-ravitaillement** : flag `/autosupply on|off` (alias `/supply_auto`), passage toutes les 60 s. Pour chaque colonie (toute planète sauf Père), cible **500 000 métal / 350 000 cristal / 150 000 deut** (`SUPPLY_TARGET_METAL`, `SUPPLY_TARGET_CRYSTAL`, `SUPPLY_TARGET_DEUT` dans `.env` ; surcharge par planète possible via `SUPPLY` dans bot.ts).
-  Dès que le manque total atteint `SUPPLY_MIN_SEND` (20 000), Père envoie le complément arrondi au millier, GT d'abord puis PT en complément dans la même flotte.
-  Limité au stock de Père (garde `DEUT_RESERVE`), sans plafond lié à la capacité de la destination ; jamais depuis/vers une planète menacée ; pas de doublon si un transport est déjà en route vers la colonie.
-  Quand il est actif, la collecte (section 3) ne redescend pas une colonie sous sa cible (pas d'aller-retour). Flag off = mode observation (log « j'aurais envoyé »).
-  Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même.
+- **Auto-ravitaillement** (`supply.ts`) : activé **par colonie** avec `/autosupply <planète> on|off` (alias `/supply_auto`), tout est désactivé par défaut. `/autosupply <planète>` donne l'état (prochain passage, manque, ce qui partirait), `/autosupply` celui de toutes les colonies, `/autosupply off` désactive tout.
+  Une vérification toutes les **12 h** par colonie active (`SUPPLY_EVERY_H`) ; activer une colonie la rend due tout de suite (1er passage dans la minute). Activations et dernières vérifications sont persistées dans `supply.json` : un redémarrage ne relance pas de passage avant l'échéance.
+  À chaque passage, cible **500 000 métal / 350 000 cristal / 150 000 deut** (`SUPPLY_TARGET_METAL`, `SUPPLY_TARGET_CRYSTAL`, `SUPPLY_TARGET_DEUT` dans `.env` ; surcharge par planète possible via `SUPPLY` dans supply.ts).
+  Si le manque total atteint `SUPPLY_MIN_SEND` (20 000), Père envoie le complément arrondi au millier, GT d'abord puis PT en complément dans la même flotte ; alerte `📦 SUPPLY` avec l'heure du prochain passage.
+  Limité au stock de Père (garde `DEUT_RESERVE`), sans plafond lié à la capacité de la destination. L'échéance est consommée quand la vérification aboutit (envoi parti, ou rien à envoyer — y compris Père trop pauvre).
+  Elle ne l'est pas, et on réessaie chaque minute, si Père ou la colonie est menacée, si un transport est déjà en route vers la colonie, ou s'il n'y a ni transporteur à quai ni slot libre.
+  Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même. `/pause` suspend tout, les échéances restent intactes.
+  Sur une colonie active, la collecte (section 3) ne la redescend pas sous sa cible (pas d'aller-retour).
 
 ### 3. Collecte (`collect`) — colonies → Père
 BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si une ressource dépasse `COLLECT_THRESHOLD` (90 %)
@@ -274,7 +279,7 @@ Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémar
 Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vide → le bot répond « ton chat id est X » et n'exécute rien.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
-`/autobuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
+`/autobuild …` · `/autosupply …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
@@ -288,7 +293,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autosupply on|off` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.
@@ -324,7 +329,7 @@ chasseur léger 50 · chasseur lourd 100 · sonde 5.
 6. Consommation de deut (formule carburant) → `DEUT_RESERVE = 5000` arbitraire. Données : `fleets[].distance` + `fuel`.
 7. Effet de `speedPercent` < 100 ; 3e point pour la formule de distance.
 8. Body d'une expédition (durée), rôle de `rallier` et de `/fleet/ralliement/lancer`.
-9. Auto-ravitaillement : cibles par défaut (500 k / 350 k / 150 k) à valider en conditions réelles ; surcharges par colonie via **`SUPPLY`** si besoin.
+9. Auto-ravitaillement : cibles par défaut (500 k / 350 k / 150 k) et période de 12 h à valider en conditions réelles ; surcharges par colonie via **`SUPPLY`** (supply.ts) si besoin.
 10. Rotation du refresh token : l'ancien reste-t-il valide ? le `exp` glisse-t-il ?
 11. Android 16 + Termux : bootstrap, `termux-wake-lock`, pm2 en arrière-plan.
 
