@@ -4,7 +4,7 @@
 import { MISSIONS } from "./spacek-client.ts";
 import { PRESETS, presetGroupHelp } from "./presets.ts";
 import { SUPPLY_EVERY_H, supplyTargetStr } from "./supply.ts";
-import { EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
+import { EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
 import { OBJECTIFS } from "./autobuild.ts";
 import { DEUT_RESERVE, num } from "./core.ts";
 
@@ -59,7 +59,7 @@ const TIPS: Tip[] = [
   { names: ["presets"], group: G.lecture, usage: "/presets", desc: "toutes les flottes des raids /p0 à /p3",
     detail: "Liste complète des variantes de /p0 /p1 /p2 /p3 avec leur composition. Pour une seule famille : /tips p1." },
   { names: ["flags"], group: G.lecture, usage: "/flags", desc: "état des automatismes",
-    detail: "save (armé / observation), ravitaillement auto, collect, recyclage, récupération, autobuild. Se règle avec /save, /collect, /recycle, /recup, /autosupply, /autobuild, /pause." },
+    detail: "save (armé / observation), ravitaillement auto, collect, recyclage, récupération, expédition auto, autobuild. Se règle avec /save, /collect, /recycle, /recup, /autoexplo, /autosupply, /autobuild, /pause." },
   { names: ["salvage", "recup_list"], group: G.lecture, usage: "/salvage", desc: "débris et cargaisons visibles dans la galaxie",
     detail: "Lit la galaxie (un appel carte + les systèmes concernés) : champs de débris (avec le seuil de recyclage), cargaisons abandonnées (éclaireurs nécessaires, temps avant extinction), quota journalier de cargaisons, et l'état de /recycle et /recup. N'envoie rien." },
 
@@ -83,6 +83,13 @@ const TIPS: Tip[] = [
       `/explo opti <h> — 10 éclaireurs + 100 GT, durée <h> (obligatoire).`,
       `/explo 911 [h] — tous les éclaireurs, GT, VB et croiseurs de Père, toutes les ressources embarquables, en gardant ${fmtN(EXPLO_DEUT_KEEP)} deut sur Père. Durée par défaut : ${EXPLO_911_HOURS} h.`,
       `La durée est bornée au maximum autorisé (min 1 h). Refus clair si expéditions non débloquées, aucun slot d'expédition, quota 24 h atteint ou système saturé.`,
+    ].join("\n") },
+  { names: ["autoexplo", "explo_auto"], group: G.scans, usage: "/autoexplo [on|off]", desc: "toujours une expédition en vol",
+    detail: () => [
+      `Garde en permanence UNE expédition en vol : 10 éclaireurs + 100 GT depuis Père vers la position 16, ${EXPLO_AUTO_HOURS} h à chaque fois (EXPLO_AUTO_HOURS). La suivante part dès que la précédente est entièrement rentrée. Désactivé par défaut.`,
+      `/autoexplo on — active (immédiat, sans confirmation) · /autoexplo off — désactive`,
+      `/autoexplo — état : on/off, expédition en vol et son retour, quota du jour, raison de blocage éventuelle.`,
+      `Rien ne part si Père est menacée. Quota 24 h atteint, aucun slot ou vaisseaux manquants : aucun envoi, une seule alerte par raison, nouvel essai chaque minute. Envoi refusé : alerte, nouvel essai 15 min plus tard. /pause coupe l'automatisme, /resume le rétablit.`,
     ].join("\n") },
 
   // ---- Ravitaillement
@@ -139,7 +146,7 @@ const TIPS: Tip[] = [
   { names: ["recall"], group: G.auto, usage: "/recall <fleetId>", desc: "rappelle une flotte (immédiat)",
     detail: "Rappel immédiat, sans confirmation (urgence). L'id de flotte se lit dans /fleets." },
   { names: ["pause"], group: G.auto, usage: "/pause", desc: "coupe tous les automatismes",
-    detail: "Coupe save, collect, recyclage, récupération, auto-construction et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
+    detail: "Coupe save, collect, recyclage, récupération, expédition auto, auto-construction et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
   { names: ["resume"], group: G.auto, usage: "/resume", desc: "restaure les automatismes",
     detail: "Remet les automatismes dans l'état où ils étaient avant /pause." },
 

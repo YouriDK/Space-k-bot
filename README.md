@@ -116,10 +116,10 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 
 ## Fonctionnalités
 
-Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED` sont à `false`.
+Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED`, `EXPLO_AUTO` sont à `false`.
 Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
 Auto-construction et auto-ravitaillement n'ont pas de flag : ils s'activent planète par planète (`/autobuild <planète> on`, `/autosupply <planète> on`), rien n'est actif par défaut.
-Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/pause`, `/resume`) ; `/pause` suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
+Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoexplo on`, `/pause`, `/resume`) ; `/pause` coupe aussi l'expédition auto et suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
 
 ### Modules
 | Fichier | Rôle |
@@ -130,7 +130,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/pause`
 | `tips.ts` | `/tips` : index court des commandes et fiche détaillée par commande (flottes des presets lues dans `PRESETS`) |
 | `presets.ts` | Raids `/p0` `/p1` `/p2` `/p3` (validation de la cible dans la galaxie) |
 | `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
-| `expedition.ts` | `/explo opti` et `/explo 911` |
+| `expedition.ts` | `/explo opti`, `/explo 911` et l'expédition permanente (`/autoexplo`) |
 | `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
 | `nextbuild.ts` | `/next` : construction et recherche mises en attente |
@@ -224,6 +224,9 @@ Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé 
 - `/explo opti <h>` : 10 éclaireurs + 100 GT.
 - `/explo 911 [h]` (2 h par défaut) : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables
   (deut > cristal > métal) en gardant **≥ 80 000 deutérium** sur Père (`EXPLO_DEUT_KEEP`). `h` par défaut = `maxHours`.
+- **Expédition permanente** (`/autoexplo on|off`, alias `/explo_auto`, flag `explo`, désactivé par défaut) : le bot garde toujours une expédition opti en vol (10 éclaireurs + 100 GT, **6 h**, `EXPLO_AUTO_HOURS`).
+  Une évaluation par minute ; la suivante ne part que lorsque la précédente est entièrement rentrée (aucun `expedition` dans `fleets`, `inFlight` à 0) et que Père n'est pas menacée. `/autoexplo` seul donne l'état (en vol, retour, quota du jour, blocage).
+  Quota 24 h, slot ou vaisseaux manquants : aucun envoi, une alerte `🧭 Expédition auto en attente` par raison, nouvel essai à la minute. Envoi refusé : alerte `🧭 Expédition auto KO`, nouvel essai 15 min plus tard ; 5 min de garde après un envoi réussi. `/pause` la coupe.
 
 ### 7. Notifications
 Formats confirmés en live le 22/09 (`menaces`, `alertesVives`, `reports`, `arrivalReports`) : plus aucun JSON brut n'est envoyé sur Telegram.
@@ -281,7 +284,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 
 **Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
-**Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/plan` · `/batiments <planète>` ·
+**Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/autoexplo …` · `/plan` · `/batiments <planète>` ·
 `/autobuild …` · `/autosupply …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
@@ -296,7 +299,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.

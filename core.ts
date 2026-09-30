@@ -28,12 +28,12 @@ export const SHIP_FR: Record<string, string> = {
 // Persistés dans flags.json : ce qui est réglé sur Telegram survit aux redémarrages (pm2, reboot, déploiement).
 // Le .env ne sert qu'au tout premier démarrage (pas encore de flags.json).
 // Ravitaillement auto : pas de flag, activation PAR COLONIE (supply.json) ; suspendu par /pause via isPaused().
-export type Flags = { save: boolean; collect: boolean; autobuild: boolean; recycle: boolean; recup: boolean };
+export type Flags = { save: boolean; collect: boolean; autobuild: boolean; recycle: boolean; recup: boolean; explo: boolean };
 const FLAGS_FILE = "flags.json";
 export const flags: Flags = {
   // autobuild : pas d'interrupteur global, l'activation est PAR PLANÈTE (build-plan.json) ; ce flag ne sert qu'à /pause /resume
   save: bool("SAVE_ARMED"), collect: bool("COLLECT_ENABLED"), autobuild: bool("AUTOBUILD_ENABLED", true),
-  recycle: bool("RECYCLE_ENABLED"), recup: bool("RECUP_ENABLED"),
+  recycle: bool("RECYCLE_ENABLED"), recup: bool("RECUP_ENABLED"), explo: bool("EXPLO_AUTO"),
 };
 const FLAG_DEFAULTS: Flags = { ...flags };
 /** Ne garde que les clés connues (un ancien flags.json peut contenir `supply`, y compris dans pausedFrom). */
@@ -57,7 +57,7 @@ export function setFlag(k: keyof Flags, v: boolean) { flags[k] = v; log("FLAG", 
 export function pause() { if (!pausedFrom) pausedFrom = { ...flags }; (Object.keys(flags) as (keyof Flags)[]).forEach((k) => (flags[k] = false)); log("PAUSE"); persistFlags(); return getFlags(); }
 export function resume() { if (pausedFrom) Object.assign(flags, pausedFrom); pausedFrom = null; log("RESUME", flags); persistFlags(); return getFlags(); }
 export const flagsStr = (f: Flags) =>
-  `save ${f.save ? "ARMÉ 🔴" : "observation"} · ravitaillement auto ${pausedFrom ? "EN PAUSE" : "par planète (/autosupply)"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
+  `save ${f.save ? "ARMÉ 🔴" : "observation"} · ravitaillement auto ${pausedFrom ? "EN PAUSE" : "par planète (/autosupply)"} · collect ${f.collect ? "on" : "off"} · recyclage ${f.recycle ? "on" : "off"} · récup ${f.recup ? "on" : "off"} · expédition auto ${f.explo ? "on" : "off"} · autobuild ${f.autobuild ? "par planète (/plan)" : "EN PAUSE"}`;
 
 // ---------- Outils ----------
 export const api = new SpaceK();

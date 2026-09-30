@@ -17,6 +17,7 @@ import { autobuildTick } from "./autobuild.ts";
 import { piratesTick } from "./pirates.ts";
 import { salvageTick } from "./salvage.ts";
 import { nextBuildTick } from "./nextbuild.ts";
+import { autoExploTick } from "./expedition.ts";
 import { supplyEnabled, supplyTarget, supplyTick } from "./supply.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
@@ -183,7 +184,7 @@ export function statusSummary(s: State): string {
   const lines = [
     `Slots ${s.fleetSlots.used}/${s.fleetSlots.total} · ${s.fleets.length} flotte(s) en vol · ${threats.length} menace(s)` +
       (e ? ` · expé ${e.inFlight}/${e.slots} (${e.lanceesAujourdhui}/${e.maxPerPlayerPer24h} auj.)` : ""),
-    `Flags : save ${f.save ? "ARMÉ" : "observation"} · autosupply ${s.planets.filter((p) => supplyEnabled(p.id)).length} colonie(s) · collect ${f.collect ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`,
+    `Flags : save ${f.save ? "ARMÉ" : "observation"} · autosupply ${s.planets.filter((p) => supplyEnabled(p.id)).length} colonie(s) · collect ${f.collect ? "on" : "off"} · explo auto ${f.explo ? "on" : "off"} · autobuild ${f.autobuild ? "on" : "off"}`,
     `Latence /state ${h.avgLatencyMs} ms · ${h.polls} polls · ${h.errors} erreurs · uptime ${Math.round(h.uptimeMs / 60_000)} min`,
     ...s.planets.map((p) => `• ${p.name} ${fmt(p.coords)} — ${resStr(roundRes(p.resources))}${p.buildQueue ? ` 🏗 ${p.buildQueue.key} ${p.buildQueue.targetLevel}` : ""}${p.shipQueue ? ` 🚀 ${p.shipQueue.remaining} ${p.shipQueue.key}` : ""}`),
     s.player.researchQueue ? `🔬 ${s.player.researchQueue.key} niv. ${s.player.researchQueue.targetLevel} — fin dans ${Math.max(0, Math.round((s.player.researchQueue.finishesAt - s.now) / 60_000))} min` : "",
@@ -253,6 +254,7 @@ export async function watch() {
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
       if (Date.now() - lastSupply > SUPPLY_TICK_MS) { lastSupply = Date.now(); await supplyTick(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
+      await autoExploTick(s, threatened).catch((e) => alert("EXPLO AUTO KO", e.message));
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
       await nextBuildTick(s).catch((e) => log("NEXT KO", e.message));
       await autobuildTick(s).catch((e) => alert("AUTOBUILD KO", e.message));
