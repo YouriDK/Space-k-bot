@@ -116,10 +116,10 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 
 ## Fonctionnalités
 
-Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED`, `EXPLO_AUTO` sont à `false`.
+Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED`, `EXPLO_AUTO`, `DEUT_COLLECT_ENABLED` sont à `false`.
 Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
 Auto-construction et auto-ravitaillement n'ont pas de flag : ils s'activent planète par planète (`/autobuild <planète> on`, `/autosupply <planète> on`), rien n'est actif par défaut.
-Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoexplo on`, `/pause`, `/resume`) ; `/pause` coupe aussi l'expédition auto et suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
+Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoexplo on`, `/autodeut on`, `/pause`, `/resume`) ; `/pause` coupe aussi l'expédition auto et le deut→Père et suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
 
 ### Modules
 | Fichier | Rôle |
@@ -135,6 +135,7 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
 | `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
 | `nextbuild.ts` | `/next` : construction et recherche mises en attente |
 | `supply.ts` | Auto-ravitaillement par colonie depuis Père (`/autosupply`), échéances persistées dans `supply.json` |
+| `deut.ts` | Plafond de deut des colonies (`/autodeut`) : l'excédent repart vers Père, calcul pur `planDeutAuto` |
 | `fleetbuild.ts` | `/fleetbuild` : vaisseaux construits sur le chantier d'une colonie, ressources envoyées par Père, commandes persistées dans `fleet-build.json` |
 | `pirates.ts` | Veille des caches pirates (Telegram + Discord) |
 | `salvage.ts` | Débris (recycleurs) et cargaisons (éclaireurs) |
@@ -169,6 +170,8 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
   Elle ne l'est pas, et on réessaie chaque minute, si Père ou la colonie est menacée, si un transport est déjà en route vers la colonie, ou s'il n'y a ni transporteur à quai ni slot libre.
   Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même. `/pause` suspend tout, les échéances restent intactes.
   Sur une colonie active, la collecte (section 3) ne la redescend pas sous sa cible (pas d'aller-retour).
+- **Deut → Père** (`deut.ts`, `/autodeut on|off`, alias `/deut_auto`, flag `deut`, désactivé par défaut) : aucune colonie ne garde plus de **150 000 deut** (`DEUT_CAP`). Une évaluation par minute ; l'excédent part vers Père avec les transporteurs **sur la colonie** (GT puis PT, une seule flotte, deut seul), pourvu qu'il atteigne `DEUT_COLLECT_MIN` (10 000). Le carburant est pris sur les 150 000 qui restent.
+  Rien si Père ou la colonie est menacée, si la colonie est réservée par `/fleetbuild` ou si un transport en part déjà vers Père. Aucun transporteur sur place → une alerte `⛽` par colonie (pas d'envoi) ; envoi refusé → alerte `⛽ DEUT KO`, nouvel essai 15 min plus tard. `/autodeut` seul donne l'état. Avec le flag actif, la cible de deut de l'auto-ravitaillement est plafonnée à `DEUT_CAP`.
 
 ### 3. Collecte (`collect`) — colonies → Père
 BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si une ressource dépasse `COLLECT_THRESHOLD` (90 %)
@@ -298,7 +301,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 **Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/autoexplo …` · `/plan` · `/batiments <planète>` ·
-`/autobuild …` · `/autosupply …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
+`/autobuild …` · `/autosupply …` · `/autodeut …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
@@ -313,7 +316,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 /fleetbuild [<planète> [<vaisseau> <qté>|max]]            (boutons, ressources envoyées par Père)
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/autodeut [on|off]` (alias `/deut_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.

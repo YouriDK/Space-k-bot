@@ -3,6 +3,7 @@
 // (PRESETS, cible de ravitaillement, garde deut des expéditions…) plutôt que de les recopier. Aucun import de telegram.ts / bot.ts (pas de cycle).
 import { MISSIONS } from "./spacek-client.ts";
 import { PRESETS, presetGroupHelp } from "./presets.ts";
+import { DEUT_CAP, DEUT_COLLECT_MIN } from "./deut.ts";
 import { SUPPLY_EVERY_H, supplyTargetStr } from "./supply.ts";
 import { EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
 import { OBJECTIFS } from "./autobuild.ts";
@@ -59,7 +60,7 @@ const TIPS: Tip[] = [
   { names: ["presets"], group: G.lecture, usage: "/presets", desc: "toutes les flottes des raids /p0 à /p3",
     detail: "Liste complète des variantes de /p0 /p1 /p2 /p3 avec leur composition. Pour une seule famille : /tips p1." },
   { names: ["flags"], group: G.lecture, usage: "/flags", desc: "état des automatismes",
-    detail: "save (armé / observation), ravitaillement auto, collect, recyclage, récupération, expédition auto, autobuild. Se règle avec /save, /collect, /recycle, /recup, /autoexplo, /autosupply, /autobuild, /pause." },
+    detail: "save (armé / observation), ravitaillement auto, collect, recyclage, récupération, expédition auto, deut→Père, autobuild. Se règle avec /save, /collect, /recycle, /recup, /autoexplo, /autosupply, /autodeut, /autobuild, /pause." },
   { names: ["salvage", "recup_list"], group: G.lecture, usage: "/salvage", desc: "débris et cargaisons visibles dans la galaxie",
     detail: "Lit la galaxie (un appel carte + les systèmes concernés) : champs de débris (avec le seuil de recyclage), cargaisons abandonnées (éclaireurs nécessaires, temps avant extinction), quota journalier de cargaisons, et l'état de /recycle et /recup. N'envoie rien." },
 
@@ -109,6 +110,16 @@ const TIPS: Tip[] = [
       `/autosupply fils — état : prochain passage, ce qui manque, ce qui partirait`,
       `/autosupply — état de toutes les colonies · /autosupply off — désactive tout`,
       `Part sans confirmation. Limité au stock de Père ; réessaie chaque minute si menace, transport déjà en route ou pas de transporteur / slot. Père ne peut pas être activé (c'est la source). /pause suspend tout, les activations sont conservées.`,
+      `Si /autodeut est actif, la cible de deut est plafonnée à ${fmtN(DEUT_CAP)} : l'autosupply ne remplit jamais le deut au-delà.`,
+    ].join("\n") },
+  { names: ["autodeut", "deut_auto"], group: G.supply, usage: "/autodeut [on|off]", desc: "ramène le deut excédentaire des colonies à Père",
+    detail: () => [
+      `Plafond de deut de ${fmtN(DEUT_CAP)} (DEUT_CAP) sur chaque planète autre que Père : l'excédent repart vers Père avec les transporteurs SUR LA COLONIE (GT puis PT, une seule flotte, deut seul). Désactivé par défaut.`,
+      `/autodeut on — active (immédiat, sans confirmation) · /autodeut off — désactive`,
+      `/autodeut — état : on/off, plafond, puis par colonie le deut, l'excédent, les transporteurs sur place et ce qui partirait (ou pourquoi rien).`,
+      `Une évaluation par minute ; rien sous ${fmtN(DEUT_COLLECT_MIN)} d'excédent (DEUT_COLLECT_MIN). Rien si Père ou la colonie est menacée, si la colonie est réservée par /fleetbuild ou si un transport part déjà d'elle vers Père. Le carburant est pris sur les ${fmtN(DEUT_CAP)} qui restent.`,
+      `Aucun transporteur sur place : pas d'envoi, une seule alerte par colonie (déploie des GT : /deploy pere <planète> largeCargo=2). Pas de slot libre : nouvel essai à la minute suivante. Envoi refusé : alerte, nouvel essai vers cette colonie 15 min plus tard. /pause coupe l'automatisme, /resume le rétablit.`,
+      `Sur les colonies en auto-ravitaillement, la cible de deut est alors plafonnée à ${fmtN(DEUT_CAP)} (pas d'aller-retour).`,
     ].join("\n") },
 
   // ---- Construction
@@ -159,7 +170,7 @@ const TIPS: Tip[] = [
   { names: ["recall"], group: G.auto, usage: "/recall <fleetId>", desc: "rappelle une flotte (immédiat)",
     detail: "Rappel immédiat, sans confirmation (urgence). L'id de flotte se lit dans /fleets." },
   { names: ["pause"], group: G.auto, usage: "/pause", desc: "coupe tous les automatismes",
-    detail: "Coupe save, collect, recyclage, récupération, expédition auto, auto-construction et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
+    detail: "Coupe save, collect, recyclage, récupération, expédition auto, deut→Père, auto-construction et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
   { names: ["resume"], group: G.auto, usage: "/resume", desc: "restaure les automatismes",
     detail: "Remet les automatismes dans l'état où ils étaient avant /pause." },
 

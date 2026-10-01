@@ -7,9 +7,10 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, DEUT_RESERVE, alert, capacity, fillCargo, fleetResultStr, fmtDur, fmtNum, isPaused, log, num, same, sendFleetFuelSafe, shipsStr, xy,
+  PERE, CARGO, DEUT_RESERVE, alert, capacity, fillCargo, flags, fleetResultStr, fmtDur, fmtNum, isPaused, log, num, same, sendFleetFuelSafe, shipsStr, xy,
 } from "./core.ts";
 import { parseThreats, threatenedPlanetIds } from "./threats.ts";
+import { DEUT_CAP } from "./deut.ts";
 
 // ================= CONFIG =================
 // SUPPLY = surcharge par planète, fusionnée sur la cible par défaut.
@@ -19,7 +20,11 @@ export const SUPPLY_TARGET: Res = {
 export const SUPPLY: Record<string, Partial<Res>> = {
   // pl_rn: { metal: 100_000, crystal: 50_000, deuterium: 20_000 },  // Planète Fils
 };
-export const supplyTarget = (planetId: string): Res => ({ ...SUPPLY_TARGET, ...SUPPLY[planetId] });
+// Flag deut (/autodeut) actif : la cible de deut est plafonnée à DEUT_CAP, sinon supply et deut.ts se renverraient le deut en boucle.
+export const supplyTarget = (planetId: string): Res => {
+  const t = { ...SUPPLY_TARGET, ...SUPPLY[planetId] };
+  return flags.deut ? { ...t, deuterium: Math.min(t.deuterium, DEUT_CAP) } : t;
+};
 export const SUPPLY_EVERY_H = num("SUPPLY_EVERY_H", 12);
 const SUPPLY_EVERY_MS = SUPPLY_EVERY_H * 3_600_000;
 const SUPPLY_MIN_SEND = num("SUPPLY_MIN_SEND", 20_000); // pas de vol pour moins que ça

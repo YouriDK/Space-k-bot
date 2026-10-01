@@ -16,6 +16,7 @@ import { tipFor, tipsIndex } from "./tips.ts";
 import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
+import { autoDeutSummary, DEUT_CAP } from "./deut.ts";
 import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
 import { cancelFleetBuild, costShort, fleetBuildMax, fleetBuildOrders, fleetBuildSummary, parseFleetBuildArgs, planFleetBuild, runFleetBuild, shipChoices, shipName } from "./fleetbuild.ts";
 import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
@@ -363,6 +364,7 @@ PT d'abord (rapides), GT en complément dans une 2e flotte.
 /autosupply <planète> — état : prochain passage, ce qui manque, ce qui partirait
 /autosupply — état de toutes les colonies · /autosupply off — désactive tout
 À chaque passage, Père complète la colonie jusqu'à ${supplyTargetStr()} (au millier près), GT puis PT.
+/autodeut on|off — ramène à Père le deut au-dessus de ${DEUT_CAP / 1000}k sur chaque colonie, avec ses GT puis PT sur place (/autodeut seul : état)
 
 ━━━━━━━━━━━━━━━━━━━━
 🏗 AUTO-CONSTRUCTION (par planète)
@@ -421,7 +423,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /autoexplo [on|off] · /autosupply [<planète>] [on|off] · /collect on|off · /autobuild <planète> on|off · /pause · /resume
+/save on|off · /autoexplo [on|off] · /autosupply [<planète>] [on|off] · /autodeut [on|off] · /collect on|off · /autobuild <planète> on|off · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
@@ -596,6 +598,15 @@ async function handle(text: string, chatId: string) {
       if (args.length && !/^(on|off|1|0|true|false)$/i.test(args[0])) throw new Error("Usage : /autoexplo on|off (seul : état)");
       if (args.length) setFlag("explo", /^(on|1|true)$/i.test(args[0]));
       return send(autoExploSummary(await getState()), chatId);
+    }
+    case "/autodeut": case "/deut_auto": {
+      // /autodeut on|off (immédiat, sans confirmation) · /autodeut (état)
+      if (args.length && !/^(on|off|1|0|true|false)$/i.test(args[0])) throw new Error("Usage : /autodeut on|off (seul : état)");
+      const s = await getState();
+      if (!args.length) return send(autoDeutSummary(s), chatId);
+      const on = /^(on|1|true)$/i.test(args[0]);
+      setFlag("deut", on);
+      return send(`${on ? `⛽ Deut → Père : ON — l'autosupply ne remplira jamais le deut au-delà de ${DEUT_CAP / 1000}k\n\n` : ""}${autoDeutSummary(s)}`, chatId);
     }
     case "/save": case "/collect": case "/recycle": case "/recup": {
       need(args, 1, `${cmd} on|off`);
