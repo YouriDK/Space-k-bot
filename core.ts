@@ -118,12 +118,12 @@ export function fillCargo(r: Res, cap: number, keepDeut = DEUT_RESERVE): Res {
 }
 export type FleetPayload = {
   planetId: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo: Res; speedPercent: number;
-  rallier?: boolean; heures?: number;
+  rallier?: boolean; holdHours?: number; heures?: number; // holdHours = durée d'exploration (expédition) · heures = garde sur une balise [BUNDLE 02/10]
 };
 export type FleetPlan = { payload: FleetPayload; summary: string };
 export function prepareFleet(s: State, o: {
   from: string; mission: Mission; coords: Coords; ships: Record<string, number>; cargo?: Partial<Res>; speedPercent?: number;
-  rallier?: boolean; heures?: number; label?: string; slotsReserved?: number;
+  rallier?: boolean; holdHours?: number; heures?: number; label?: string; slotsReserved?: number;
 }): FleetPlan {
   const p = planetOrThrow(s, o.from);
   const ships = Object.fromEntries(Object.entries(o.ships).filter(([, n]) => n > 0));
@@ -138,14 +138,14 @@ export function prepareFleet(s: State, o: {
   (Object.keys(cargo) as (keyof Res)[]).forEach((k) => { if (cargo[k] > Math.floor(p.resources[k])) throw new Error(`Pas assez de ${k} sur ${p.name} (${Math.floor(p.resources[k])})`); });
   const payload: FleetPayload = {
     planetId: p.id, mission: o.mission, coords: xy(o.coords), ships, cargo, speedPercent: o.speedPercent ?? 100,
-    ...(o.rallier ? { rallier: true } : {}), ...(o.heures != null ? { heures: o.heures } : {}),
+    ...(o.rallier ? { rallier: true } : {}), ...(o.holdHours != null ? { holdHours: o.holdHours } : {}), ...(o.heures != null ? { heures: o.heures } : {}),
   };
   const dest = s.planets.find((x) => same(x.coords, payload.coords));
   const summary = [
     `${o.label ?? o.mission} depuis ${p.name} (${fmt(p.coords)}) → ${fmt(payload.coords)}${dest ? ` (${dest.name})` : ""}`,
     `Vaisseaux : ${shipsStr(ships)}`,
     total ? `Cargo : ${resStr(cargo)} / soute ${fmtNum(cap)}` : `Cargo : vide (soute ${fmtNum(cap)})`,
-    `Vitesse ${payload.speedPercent} %${payload.rallier ? " · attendre l'allié ✔" : ""}${payload.heures != null ? ` · ${payload.heures} h` : ""} · slots ${s.fleetSlots.used}/${s.fleetSlots.total}`,
+    `Vitesse ${payload.speedPercent} %${payload.rallier ? " · attendre l'allié ✔" : ""}${payload.holdHours != null ? ` · ${payload.holdHours} h sur place` : ""}${payload.heures != null ? ` · ${payload.heures} h` : ""} · slots ${s.fleetSlots.used}/${s.fleetSlots.total}`,
   ].join("\n");
   return { payload, summary };
 }

@@ -1,4 +1,5 @@
-// Expéditions depuis Père vers la position 16 de son système (state.expedition.position), durée `heures` [BUNDLE].
+// Expéditions depuis Père vers la position 16 de son système (state.expedition.position), durée `holdHours` [BUNDLE 02/10 :
+// `heures` ne sert qu'à la garde sur une balise — envoyé par erreur jusque-là, le serveur l'ignorait et l'expédition durait 0 h].
 //   /explo opti <h>  → 10 éclaireurs + 100 GT
 //   /explo 911 [h]   → (2 h par défaut) tous les éclaireurs + GT + vaisseaux de bataille + croiseurs, toutes les ressources embarquables,
 //                      en gardant EXPLO_DEUT_KEEP (80 000) de deutérium sur Père pour être sûr de partir.
@@ -40,7 +41,7 @@ export function planExpedition(s: State, kind: "opti" | "911", hours?: number): 
     if (!Object.keys(ships).length) throw new Error("Aucun éclaireur / GT / vaisseau de bataille / croiseur sur Père");
     cargo = fillCargo(p.resources, capacity(ships), EXPLO_DEUT_KEEP);
   }
-  const plan = prepareFleet(s, { from: PERE, mission: "expedition", coords, ships, cargo, heures, label: `🧭 Expédition ${kind}` });
+  const plan = prepareFleet(s, { from: PERE, mission: "expedition", coords, ships, cargo, holdHours: heures, label: `🧭 Expédition ${kind}` });
   plan.summary += `\nDurée ${heures} h (max ${e.maxHours}) · quota ${e.lanceesAujourdhui + 1}/${e.maxPerPlayerPer24h} aujourd'hui · slots expé ${e.inFlight + 1}/${e.slots}` +
     (kind === "911" ? `\nDeutérium gardé sur Père : ${fmtNum(Math.floor(p.resources.deuterium) - cargo.deuterium)} (min ${fmtNum(EXPLO_DEUT_KEEP)})` : "");
   return plan;
@@ -78,7 +79,7 @@ export async function autoExploTick(s: State, threatened: Set<string>) {
   }
   exploAlerted = "";
   const { plan } = d;
-  const what = `${shipsStr(plan.payload.ships)} · ${plan.payload.heures} h`;
+  const what = `${shipsStr(plan.payload.ships)} · ${plan.payload.holdHours} h sur place`;
   let res;
   try { res = await sendFleet(plan, new Set(s.fleets.map((f) => f.id))); }
   catch (e: any) { exploKoAt = Date.now(); alert(`🧭 Expédition auto KO : ${e.message}\nNouvel essai dans ${fmtDur(EXPLO_AUTO_RETRY_MS)}`); return; }

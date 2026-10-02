@@ -223,7 +223,7 @@ Les planètes du joueur viennent du relevé `galaxy-snapshot.json` (systèmes à
 si le compte diffère du classement, parcours complet. Raccourcis prévus : `/scan_2003CP0`, `/scan_987`, `/scan_Thomas`, `/scan_aaa` (tout nom marche).
 
 ### 6. Expéditions (`/explo`)
-Cible : position `state.expedition.position` (16) du système de Père, mission `expedition`, `heures = min(h, maxHours)`.
+Cible : position `state.expedition.position` (16) du système de Père, mission `expedition`, `holdHours = min(h, maxHours)` (durée d'exploration ; `heures` est la garde sur balise).
 Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé (`saturatedSystems`).
 - `/explo opti <h>` : 10 éclaireurs + 100 GT.
 - `/explo 911 [h]` (2 h par défaut) : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables

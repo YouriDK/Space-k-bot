@@ -171,8 +171,8 @@ Payload du `kaiya_session` (base64, lisible) : `sub` (player id), `orgId`, `slug
 | Champ | Quand | Sens |
 |---|---|---|
 | `rallier: true` | attaque | case « Ralliement » / attendre l'allié (ACS) |
-| `heures: <n>` | expédition | durée en heures (plafonnée côté client) |
-| `holdHours: <n>` | balise (garde) | durée de garde en heures |
+| `holdHours: <n>` | expédition | durée d'exploration en heures, 0…`maxHours` (relu dans le bundle le 02/10/2026 : `...pe?{holdHours:Number(w)}:{}` avec `pe` = mission expédition ; la flotte en vol expose `holdMs`) |
+| `heures: <n>` | balise (garde) | durée de garde en heures (`...T?{heures:…}:{}` avec `T` = cible balise) — ⚠️ les deux étaient inversés dans cette doc jusqu'au 02/10 : envoyé à une expédition, `heures` est ignoré et elle dure 0 h |
 | `coords.body: "moon"` | toute mission | viser la lune plutôt que la planète |
 
 Phases observées dans l'UI pour `fleets[]` : `outbound`, `returning`, `chargement`, `ralliement`, `garde` ; champs associés `rallieJusqua`, `gardeJusqua`, `chargeJusqua`, `exploringUntil`, `turnedAt`.
@@ -226,6 +226,6 @@ Hors périmètre : `/api/dev/*` (admin : sanction, boost, suppression de joueur�
 2. Header **ou** cookie suffit-il seul ?
 3. Réponse JSON de chaque POST
 4. ~~Format de `menaces`~~ → confirmé en live le 22/09 (voir le tableau ci-dessus)
-5. ~~Body d'une expédition et `rallier`~~ → `heures`, `rallier: true` lus dans le bundle le 21/09/2026
+5. ~~Body d'une expédition et `rallier`~~ → `holdHours` (durée d'expédition, corrigé le 02/10/2026 — `heures` est la garde sur balise), `rallier: true` lus dans le bundle
 6. 3e envoi à un écart de systèmes différent (valider la formule de distance)
 7. Effet de `speedPercent` < 100

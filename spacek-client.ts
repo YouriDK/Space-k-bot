@@ -245,7 +245,7 @@ export class SpaceK {
   // ---------- Flottes ----------
   // [TESTÉ en transport] ; autres missions [BUNDLE]. coords sans galaxy.
   // Champs optionnels lus dans le bundle (21/09/2026) : `rallier: true` (case « Ralliement » / attendre l'allié, attaque),
-  // `heures` (durée d'expédition), `holdHours` (garde sur balise), `coords.body: "moon"` (viser la lune). [BUNDLE]
+  // `holdHours` (durée d'expédition), `heures` (garde sur balise), `coords.body: "moon"` (viser la lune). [BUNDLE, corrigé 02/10/2026]
   sendFleet = (f: {
     planetId: string; mission: Mission; coords: Coords & { body?: "moon" };
     ships: Record<string, number>; cargo?: Res; speedPercent?: number;
