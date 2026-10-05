@@ -6,7 +6,7 @@
 import {
   api, prepareFleet, sendFleet, parseCoords, getState, watch, setNotify,
   getFlags, setFlag, pause, resume, getHealth, flagsStr, statusSummary, planetsSummary, fleetsSummary, threatsSummary, shipsSummary,
-  CARGO, DEUT_RESERVE, PERE, etaStr, fleetResultStr, fmtDur, resStr, log, planetOrThrow, type FleetPlan, type FleetResult, type Flags,
+  CARGO, DEUT_RESERVE, PERE, etaStr, fleetResultStr, fmtDur, resStr, log, planetOrThrow, restartBlockers, type FleetPlan, type FleetResult, type Flags,
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
@@ -19,6 +19,7 @@ import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, 
 import { autoDeutSummary, DEUT_CAP } from "./deut.ts";
 import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
 import { cancelFleetBuild, costShort, fleetBuildMax, fleetBuildOrders, fleetBuildSummary, parseFleetBuildArgs, planFleetBuild, runFleetBuild, shipChoices, shipName } from "./fleetbuild.ts";
+import { checkUpdate, confirmUpdateOnStart, launchUpdate, shortSha, updateRunning } from "./maj.ts";
 import { MISSIONS, type Mission, type Planet, type Res, type State } from "./spacek-client.ts";
 
 const TOKEN = process.env.TG_TOKEN ?? "";
@@ -399,6 +400,7 @@ Père envoie le coût exact (GT puis PT) ; à l'arrivée le chantier de la plan�
 🔧 DIVERS
 ━━━━━━━━━━━━━━━━━━━━
 /token <refresh_token> — renouvelle le token Keycloak (tous les 7 j max)
+/maj — met le bot à jour depuis GitHub : commits à déployer + ✅, redémarrage, retour arrière auto si le nouveau code ne démarre pas (refusé si un fleet-save est en vol)
 /help full — commandes génériques (/send, /transport, /deploy, /spy, /build, /research, /ships, /cancel, /efficiency)
 
 🔔 Notifications automatiques : 🏴‍☠️ nouvelle cache pirate (T0→/p0, T1→/p1, T2→/p2, T3→/p3) · bâtiment / recherche / chantier terminés · sondé par X · sonde ou attaque en approche · impact · erreurs · heartbeat toutes les ${process.env.HEARTBEAT_H || 6} h`;
@@ -420,6 +422,7 @@ Actions (confirmation ✅/❌)
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 /fleetbuild [<planète> [<vaisseau> <qté>|max]] — vaisseaux construits sur la planète, ressources envoyées par Père
 /fleetbuild liste · /fleetbuild annule <n°> (immédiat)
+/maj — mise à jour depuis GitHub (alias /update), retour arrière auto
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
@@ -624,6 +627,36 @@ async function handle(text: string, chatId: string) {
       await api.setRefreshToken(args[0]);
       return send("🔑 Refresh token remplacé et auth re-testée : OK ✅", chatId);
     }
+    case "/maj": case "/update": {
+      // Fetch dans le clone (créé au besoin) → commits à déployer → ✅ → update.sh détaché (copie, pm2 restart, retour arrière)
+      const pid = updateRunning();
+      if (pid) return send(`⏳ Une mise à jour est déjà en cours (pid ${pid}) : le résultat arrive dans ~2 min.`, chatId);
+      const blocked = (bl: string[]) => `⛔ Mise à jour refusée : un redémarrage maintenant ferait perdre :
+${bl.map((b) => `• ${b}`).join("\n")}
+Relance /maj une fois le fleet-save terminé (flotte rappelée).`;
+      // Jeu injoignable : on vérifie quand même les saves en mémoire (une mise à jour peut justement réparer l'accès au jeu)
+      const fresh = () => getState().catch((e: any) => { log("MAJ : état indisponible", e.message); return undefined; });
+      const bl = restartBlockers(await fresh());
+      if (bl.length) return send(blocked(bl), chatId);
+      send("🔄 Recherche de mises à jour…", chatId);
+      const u = await checkUpdate();
+      if (!u.commits.length) return send(`✅ Déjà à jour (${shortSha(u.latest)})`, chatId);
+      const others = [...pending.values()].filter((p) => p.expires > Date.now()).length; // perdues au redémarrage
+      const summary = [
+        `🔄 Mise à jour ${shortSha(u.current)} → ${shortSha(u.latest)}${u.cloned ? " (clone du dépôt créé)" : ""}`,
+        ...u.commits.map((c) => `• ${c}`),
+        u.more ? `… et ${u.more} autre(s)` : "",
+        u.deps.length ? `⚠️ ${u.deps.join(", ")} différent(s) : non copié(s), npm install à faire à la main si une dépendance a changé` : "",
+        others ? `⚠️ ${others} autre(s) confirmation(s) en attente seront perdues (à refaire)` : "",
+        "Le bot redémarre ; sans signe de vie sous 90 s, l'ancienne version est remise automatiquement.",
+      ].filter(Boolean).join("\n");
+      return simple(summary, async () => {
+        const again = restartBlockers(await fresh()); // revérifié au moment du ✅
+        if (again.length) throw new Error(blocked(again));
+        launchUpdate();
+        return "🔄 Mise à jour lancée : redémarrage dans quelques secondes, confirmation ici d'ici 1 à 2 min.";
+      });
+    }
     case "/recall": { need(args, 1, "/recall <fleetId>"); await api.recall(args[0]); return send(`✅ Rappel demandé pour la flotte ${args[0]}`, chatId); }
 
     case "/send": {
@@ -721,6 +754,7 @@ function heartbeat() {
 }
 
 // ---------- Démarrage ----------
+confirmUpdateOnStart(() => tg("getMe", {}), (m) => (CHAT_ID ? send(m) : log(m))); // /maj : confirme le nouveau code à update.sh
 if (CHAT_ID) {
   setNotify((m) => send(m));
   send(`🚀 spacek-bot démarré\n${flagsStr(getFlags())}\n/help pour les commandes`);

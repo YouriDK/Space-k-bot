@@ -181,6 +181,14 @@ const TIPS: Tip[] = [
     detail: "/tips — l'index court de toutes les commandes (une ligne chacune). /tips <commande> — la fiche : ce que ça fait, arguments, exemples, confirmation ou non. Accepte /pirates, p1, autosupply, scan_Thomas… Seul le premier mot est pris en compte." },
   { names: ["token"], group: G.divers, usage: "/token <refresh_token>", desc: "renouvelle le token Keycloak",
     detail: "Remplace le refresh token Keycloak et re-teste l'authentification tout de suite. Le jeton se renouvelle tout seul tant que le bot tourne ; il n'expire qu'après 7 jours d'inactivité. Le message n'est pas journalisé en clair." },
+  { names: ["maj", "update"], group: G.divers, usage: "/maj", desc: "met le bot à jour depuis GitHub (retour arrière auto)",
+    detail: () => [
+      "Récupère le dépôt GitHub sur le téléphone (clone créé au premier appel), liste les commits à déployer puis demande ✅.",
+      "À la confirmation, update.sh sauvegarde le code actuel, copie les nouveaux fichiers et redémarre le bot. Le nouveau bot annonce « ✅ Mise à jour en place » ; sans signe de vie sous 90 s, l'ancienne version est remise automatiquement et un message ❌ arrive avec les dernières lignes de pm2 logs.",
+      "Jamais écrasés : les *.json (flags, build-plan, supply, fleet-build, package.json…), .env, refresh_token.txt, les *.jsonl. package.json différent → signalé, npm install reste à faire à la main.",
+      "Refusé si un fleet-save est en vol, ou si le save est armé et qu'une menace arrive dans moins de 5 min (revérifié au ✅). Les confirmations ✅ en attente sont perdues au redémarrage.",
+      "Journal sur le téléphone : ~/spacek-bot/update.log · sauvegardes : ~/spacek-backups (10 dernières).",
+    ].join("\n") },
 
   // ---- Génériques
   { names: ["send"], group: G.generic, usage: "/send <pl> <mission> <cible> <k=n,…>", desc: "flotte libre (+ m= c= d= speed=)",

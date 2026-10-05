@@ -116,6 +116,28 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
   // Si on avait déjà décollé, le rappel se fait à recallAt comme prévu.
 }
 
+/** /maj : ce qu'un redémarrage du process ferait perdre (vide = redémarrage sans risque). Les saves en cours ne vivent
+ *  qu'en mémoire (`saves`) : redémarrer oublierait le rappel et la flotte se poserait sur la planète de repli.
+ *  Saves simulés (observation, aucun slot) : rien de perdu. Save armé et décollage dans moins de RESTART_GUARD_MS :
+ *  le bot serait en plein redémarrage au moment de décoller. Le reste de l'état (flags, /next, /fleetbuild, supply,
+ *  build-plan, seen) est persisté dans des *.json ; confirmations ✅ et saisies en attente sont seulement à refaire.
+ *  Sans état (jeu injoignable) : seuls les saves en mémoire sont vérifiés — une mise à jour doit pouvoir réparer le bot. */
+const RESTART_GUARD_MS = 5 * 60_000;
+export function restartBlockers(s?: State): string[] {
+  const now = s?.now ?? Date.now();
+  const name = (id: string) => s?.planets.find((p) => p.id === id)?.name ?? id;
+  const out = [...saves].filter(([, st]) => !st.simulated).map(([id, st]) =>
+    `fleet-save de ${name(id)} en vol (rappel ${st.recallAt > now ? `dans ${etaStr(st.recallAt - now)}` : "imminent"})`);
+  if (s && flags.save) {
+    for (const t of parseThreats(s).filter(triggersSave)) {
+      const id = planetIdAt(s, t.target);
+      if (!id || saves.has(id) || t.arrivesAt <= now || t.arrivesAt - now > RESTART_GUARD_MS) continue;
+      out.push(`${threatLabel(t)} sur ${name(id)} dans ${etaStr(t.arrivesAt - now)} : le fleet-save armé doit pouvoir décoller`);
+    }
+  }
+  return out;
+}
+
 // ---------- 2. Ravitaillement auto depuis Père : supply.ts ----------
 let lastSupply = 0;
 

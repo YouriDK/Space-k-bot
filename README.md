@@ -71,10 +71,14 @@ adb shell "device_config set_sync_disabled_for_tests persistent"
 adb shell "dumpsys deviceidle whitelist +com.termux"
 
 # Dans Termux : pkg install openssh nodejs, ajouter sa clé SSH, puis sshd
-# Ensuite tout se pilote à distance :
+# Première copie du projet (une seule fois ; ensuite les mises à jour passent par /maj, voir plus bas) :
 scp *.ts *.json *.sh <user>@<ip-du-téléphone>:spacek-bot/    # port 8022
 ssh <user>@<ip-du-téléphone> "cd spacek-bot && bash setup-termux.sh"
 ```
+
+Le `scp` ci-dessus ne sert qu'à **la toute première installation** (il copie aussi les `*.json` : à ne plus jamais
+refaire une fois le bot en service, il écraserait `build-plan.json` et l'état du téléphone). Les mises à jour se font
+ensuite depuis Telegram avec `/maj` (section suivante).
 
 `setup-termux.sh` installe les dépendances, `pm2`, le script de démarrage automatique (Termux:Boot)
 et crée un `.env` en mode observation. Ensuite :
@@ -86,6 +90,49 @@ pm2 logs spacek
 
 Points d'attention : exclure Termux de l'optimisation de batterie, garder `termux-wake-lock` actif,
 et ne pas balayer l'application hors des récentes.
+
+### 4b. Mises à jour depuis Telegram (`/maj`)
+
+Le téléphone se met à jour tout seul depuis GitHub (`https://github.com/YouriDK/Space-k-bot`, branche `main`),
+sans le Mac ni le même réseau : on pousse sur `main`, puis `/maj` sur Telegram.
+
+**Installation (une seule fois, dans Termux)** — le bot doit déjà tourner sous pm2 (`spacek`) :
+
+```bash
+pkg install -y git curl
+curl -fsSL https://raw.githubusercontent.com/YouriDK/Space-k-bot/main/update.sh | bash
+```
+
+Cela clone le dépôt dans `~/spacek-repo`, déploie la dernière version dans `~/spacek-bot` (mêmes règles que `/maj`
+ci-dessous) et redémarre le bot, qui confirme sur Telegram. Ce premier lancement ne peut pas vérifier le fleet-save :
+le faire quand aucune menace n'est en cours (`/threats`). Si le process pm2 `spacek` n'existe pas encore, le code est
+copié sans redémarrage et le script rappelle les étapes de `setup-termux.sh`.
+
+**Fonctionnement de `/maj`** (alias `/update`) :
+1. `git fetch` dans `~/spacek-repo` (clone créé au premier appel), comparaison avec `~/spacek-bot/.version`
+   (sha déployé) → « déjà à jour », ou la liste des commits à déployer et ✅ Confirmer / ❌ Annuler.
+2. Refus si un **fleet-save est en vol** (son rappel n'existe qu'en mémoire : un redémarrage le perdrait) ou si le
+   save est armé et qu'une menace arrive dans moins de 5 min. Revérifié au moment du ✅.
+3. Au ✅, le bot lance `update.sh` **détaché** (ré-attaché à init : il survit au `pm2 restart`, qui tue l'arbre de
+   processus du bot). Le script se ré-exécute depuis le clone (la logique de mise à jour est celle de la version
+   déployée), sauvegarde le code actuel dans `~/spacek-backups/<date-heure>-avant-maj/` (10 gardées), copie les
+   nouveaux fichiers, écrit le marqueur `.update-pending` puis fait `pm2 restart spacek`.
+4. Le nouveau bot, une fois en place (15 s de fonctionnement et Telegram joignable), envoie
+   « ✅ Mise à jour en place : <ancien> → <nouveau> » et supprime le marqueur.
+
+**Retour arrière automatique** : si le marqueur est encore là 90 s après le redémarrage (le nouveau code ne démarre
+pas), `update.sh` remet les fichiers sauvegardés, supprime ceux que la mise à jour avait ajoutés, refait
+`pm2 restart`, et envoie lui-même (curl, jetons lus dans `.env`) « ❌ Mise à jour <sha> annulée » avec les dernières
+lignes de `pm2 logs`. Le jeu injoignable ne déclenche pas de retour arrière (seul Telegram est vérifié).
+
+**Jamais écrasé** : seuls les fichiers suivis par git **hors `*.json`** sont copiés (`*.ts`, `*.sh`, `README.md`,
+`space-k-api.md`, `.env.example`, `.gitignore`). Ne sont jamais touchés : tous les `*.json` (dont `build-plan.json`,
+qui porte les vraies activations d'autobuild, `package.json`, `package-lock.json`, `tsconfig.json`), `.env`,
+`refresh_token.txt*`, les `*.jsonl`. Si `package.json` ou `package-lock.json` diffère du dépôt, c'est signalé
+(récapitulatif et message de fin) : `npm install` reste à faire à la main.
+
+Journal : `~/spacek-bot/update.log` · verrou `~/spacek-bot/.update-lock` (une mise à jour à la fois).
+À la main (ssh) : `bash ~/spacek-bot/update.sh` fait la même chose, sans la vérification du fleet-save.
 
 ### 5. Discord (optionnel)
 
@@ -100,6 +147,7 @@ Aucun bot Discord n'est nécessaire : le serveur reçoit un simple POST. **Seule
 | `build-plan.json` | Objectifs d'auto-construction, activation par planète — rechargé à chaud |
 | `refresh_token.txt` | Jeton Keycloak, tourné automatiquement (`.bak` conservé) — jamais commité |
 | `flags.json`, `next-build.json`, `supply.json`, `fleet-build.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
+| `.version`, `.update-pending`, `update.log` | Mise à jour `/maj` : sha déployé, marqueur en attente de confirmation, journal |
 
 `HOME_PLANET` désigne la planète qui sert de hub (départ des raids, scans, expéditions et ravitaillements).
 Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous de `/api/state`.
@@ -111,6 +159,8 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 | `spacek-client.ts` | Client API : chaîne d'authentification complète, rotation atomique du jeton, retry 401, un wrapper par endpoint |
 | `bot.ts` | Boucle de poll, fleet-save, ravitaillement, collecte, capture de données |
 | `telegram.ts` | Commandes, confirmations, notifications, heartbeat |
+| `maj.ts` | `/maj` : clone et commits à déployer, lancement détaché d'`update.sh`, confirmation au démarrage |
+| `update.sh` | Mise à jour du téléphone depuis GitHub : sauvegarde, copie, `pm2 restart`, retour arrière |
 | `setup-termux.sh` | Installation côté téléphone |
 | `space-k-api.md` | Référence de l'API du jeu |
 
@@ -301,7 +351,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 **Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/autoexplo …` · `/plan` · `/batiments <planète>` ·
-`/autobuild …` · `/autosupply …` · `/autodeut …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>`.
+`/autobuild …` · `/autosupply …` · `/autodeut …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>` · `/maj`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
@@ -315,6 +365,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /build <planète> <key> · /research <planète> <key> · /ships <planète> <key> <qty>
 /cancel build|ships|research <planète> · /efficiency <planète> <key> <percent>
 /fleetbuild [<planète> [<vaisseau> <qté>|max]]            (boutons, ressources envoyées par Père)
+/maj                                                       (mise à jour depuis GitHub, retour arrière auto)
 ```
 **Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/autodeut [on|off]` (alias `/deut_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
 

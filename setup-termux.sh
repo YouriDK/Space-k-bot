@@ -1,11 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Installation du serveur Space-K sur Android (Termux F-Droid / GitHub, PAS Play Store).
-# Prérequis : le dossier du projet copié dans ~/spacek-bot (scp, git clone ou adb push).
+# Prérequis : le code dans ~/spacek-bot (curl -fsSL …/update.sh | bash, voir README) ; ensuite les mises à jour passent par /maj.
 set -e
 cd ~/spacek-bot
 
 pkg update -y
-pkg install -y nodejs openssh git
+pkg install -y nodejs openssh git curl   # git + curl : mises à jour /maj (update.sh)
 [ -f package.json ] || npm init -y >/dev/null
 npm i -D tsx typescript @types/node
 npm i -g pm2

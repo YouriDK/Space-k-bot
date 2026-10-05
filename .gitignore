@@ -17,3 +17,9 @@ fleet-build.json
 
 # Relevé de galaxie (contient les pseudos et identifiants des autres joueurs)
 galaxy-snapshot.json
+
+# Mise à jour /maj (update.sh) : marqueur, version déployée, journal, verrou
+.update-pending
+.version
+update.log
+.update-lock/
