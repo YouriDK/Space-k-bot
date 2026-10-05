@@ -286,8 +286,8 @@ Refus clair si aucun slot d'expédition, quota 24 h atteint ou système saturé 
 - `/explo opti <h>` : 10 éclaireurs + 100 GT.
 - `/explo 911 [h]` (2 h par défaut) : tous les éclaireurs + GT + vaisseaux de bataille + croiseurs de Père, **toutes les ressources** embarquables
   (deut > cristal > métal) en gardant **≥ 80 000 deutérium** sur Père (`EXPLO_DEUT_KEEP`). `h` par défaut = `maxHours`.
-- **Expédition permanente** (`/autoexplo on|off`, alias `/explo_auto`, flag `explo`, désactivé par défaut) : le bot garde toujours une expédition opti en vol (10 éclaireurs + 100 GT, **6 h**, `EXPLO_AUTO_HOURS`).
-  Une évaluation par minute ; la suivante ne part que lorsque la précédente est entièrement rentrée (aucun `expedition` dans `fleets`, `inFlight` à 0) et que Père n'est pas menacée. `/autoexplo` seul donne l'état (en vol, retour, quota du jour, blocage).
+- **Expédition permanente** (`/autoexplo on|off`, alias `/explo_auto`, flag `explo`, désactivé par défaut) : le bot garde toujours **deux** expéditions opti en vol (`EXPLO_AUTO_COUNT`, 10 éclaireurs + 100 GT chacune, **6 h**, `EXPLO_AUTO_HOURS`).
+  Une évaluation par minute, un envoi à la fois (5 min d'écart) ; une expédition part dès qu'il y en a moins de deux en vol ou pas encore rentrées (flottes `expedition` de `fleets`, `inFlight`) et que Père n'est pas menacée. `/autoexplo` seul donne l'état (en vol, retour, quota du jour, blocage).
   Quota 24 h, slot ou vaisseaux manquants : aucun envoi, une alerte `🧭 Expédition auto en attente` par raison, nouvel essai à la minute. Envoi refusé : alerte `🧭 Expédition auto KO`, nouvel essai 15 min plus tard ; 5 min de garde après un envoi réussi. `/pause` la coupe.
 
 ### 7. Notifications

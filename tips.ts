@@ -5,7 +5,7 @@ import { MISSIONS } from "./spacek-client.ts";
 import { PRESETS, presetGroupHelp } from "./presets.ts";
 import { DEUT_CAP, DEUT_COLLECT_MIN } from "./deut.ts";
 import { SUPPLY_EVERY_H, supplyTargetStr } from "./supply.ts";
-import { EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
+import { EXPLO_AUTO_COUNT, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
 import { OBJECTIFS } from "./autobuild.ts";
 import { DEUT_RESERVE, num } from "./core.ts";
 import { AUTOFLEET_EVERY_MS, AUTOFLEET_LOT_MS, AUTOFLEET_MIN_MS } from "./autofleet.ts";
@@ -86,9 +86,9 @@ const TIPS: Tip[] = [
       `/explo 911 [h] — tous les éclaireurs, GT, VB et croiseurs de Père, toutes les ressources embarquables, en gardant ${fmtN(EXPLO_DEUT_KEEP)} deut sur Père. Durée par défaut : ${EXPLO_911_HOURS} h.`,
       `La durée est bornée au maximum autorisé (min 1 h). Refus clair si expéditions non débloquées, aucun slot d'expédition, quota 24 h atteint ou système saturé.`,
     ].join("\n") },
-  { names: ["autoexplo", "explo_auto"], group: G.scans, usage: "/autoexplo [on|off]", desc: "toujours une expédition en vol",
+  { names: ["autoexplo", "explo_auto"], group: G.scans, usage: "/autoexplo [on|off]", desc: "toujours deux expéditions en vol",
     detail: () => [
-      `Garde en permanence UNE expédition en vol : 10 éclaireurs + 100 GT depuis Père vers la position 16, ${EXPLO_AUTO_HOURS} h à chaque fois (EXPLO_AUTO_HOURS). La suivante part dès que la précédente est entièrement rentrée. Désactivé par défaut.`,
+      `Garde en permanence ${EXPLO_AUTO_COUNT} expéditions en vol (EXPLO_AUTO_COUNT) : 10 éclaireurs + 100 GT chacune depuis Père vers la position 16, ${EXPLO_AUTO_HOURS} h à chaque fois (EXPLO_AUTO_HOURS). Dès qu'une est entièrement rentrée, la suivante part. Désactivé par défaut.`,
       `/autoexplo on — active (immédiat, sans confirmation) · /autoexplo off — désactive`,
       `/autoexplo — état : on/off, expédition en vol et son retour, quota du jour, raison de blocage éventuelle.`,
       `Rien ne part si Père est menacée. Quota 24 h atteint, aucun slot ou vaisseaux manquants : aucun envoi, une seule alerte par raison, nouvel essai chaque minute. Envoi refusé : alerte, nouvel essai 15 min plus tard. /pause coupe l'automatisme, /resume le rétablit.`,

@@ -10,7 +10,7 @@ import {
 } from "./bot.ts";
 import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
-import { planExpedition, autoExploSummary, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP } from "./expedition.ts";
+import { planExpedition, autoExploSummary, EXPLO_AUTO_COUNT, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
 import { tipFor, tipsIndex } from "./tips.ts";
 import { salvageSummary } from "./salvage.ts";
@@ -351,7 +351,7 @@ Pas assez de sondes → réparties à parts égales. Récap ✅ par planète.
 ━━━━━━━━━━━━━━━━━━━━
 /explo opti <h> — 10 éclaireurs + 100 GT, durée <h>
 /explo 911 [h] — tous éclaireurs + GT + VB + croiseurs, toutes les ressources, garde ${EXPLO_DEUT_KEEP.toLocaleString("fr-FR")} deut (2 h par défaut)
-/autoexplo on|off — toujours une expédition en vol : 10 éclaireurs + 100 GT, ${EXPLO_AUTO_HOURS} h, la suivante part au retour de la précédente (/autoexplo seul : état)
+/autoexplo on|off — toujours ${EXPLO_AUTO_COUNT} expéditions en vol : 10 éclaireurs + 100 GT chacune, ${EXPLO_AUTO_HOURS} h, la suivante part dès qu'une rentre (/autoexplo seul : état)
 Refus clair si limite 24 h, simultané ou système saturé.
 
 ━━━━━━━━━━━━━━━━━━━━

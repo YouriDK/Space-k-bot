@@ -3,7 +3,7 @@
 //   /explo opti <h>  → 10 éclaireurs + 100 GT
 //   /explo 911 [h]   → (2 h par défaut) tous les éclaireurs + GT + vaisseaux de bataille + croiseurs, toutes les ressources embarquables,
 //                      en gardant EXPLO_DEUT_KEEP (80 000) de deutérium sur Père pour être sûr de partir.
-//   flag `explo` (/autoexplo on) → toujours UNE expédition opti de EXPLO_AUTO_HOURS (6 h) : la suivante part quand la précédente est rentrée.
+//   flag `explo` (/autoexplo on) → toujours EXPLO_AUTO_COUNT (2) expéditions opti de EXPLO_AUTO_HOURS (6 h) en vol : dès qu'une rentre, la suivante part.
 import type { State } from "./spacek-client.ts";
 import {
   PERE, alert, capacity, etaStr, fillCargo, flags, fleetResultStr, fmtDur, fmtNum, isPaused, num, pere, prepareFleet, sendFleet, shipsStr, type FleetPlan,
@@ -13,6 +13,7 @@ import { parseThreats, threatenedPlanetIds } from "./threats.ts";
 export const EXPLO_DEUT_KEEP = num("EXPLO_DEUT_KEEP", 80_000);
 export const EXPLO_911_HOURS = num("EXPLO_911_HOURS", 2);
 export const EXPLO_AUTO_HOURS = num("EXPLO_AUTO_HOURS", 6);
+export const EXPLO_AUTO_COUNT = Math.max(1, num("EXPLO_AUTO_COUNT", 2)); // expéditions gardées en vol en même temps (décision du 05/10/2026 : 2)
 const EXPLO_AUTO_EVAL_MS = 60_000;      // une évaluation par minute au plus
 const EXPLO_AUTO_SENT_MS = 5 * 60_000;  // après un envoi réussi : pas de nouvel envoi avant que l'état ait pu refléter l'expédition en vol
 const EXPLO_AUTO_RETRY_MS = 15 * 60_000; // après un envoi refusé par le jeu
@@ -48,13 +49,15 @@ export function planExpedition(s: State, kind: "opti" | "911", hours?: number): 
 }
 
 // ---------- Expédition permanente (flag explo, /autoexplo) ----------
-/** lancer = tout est libre, `plan` prêt · vol = une expédition est encore en vol (ou pas rentrée) · menace = Père menacée (le fleet-save a besoin
+/** lancer = une place est libre, `plan` prêt · vol = EXPLO_AUTO_COUNT expéditions sont en vol (ou pas rentrées) · menace = Père menacée (le fleet-save a besoin
  *  des vaisseaux) · attente = bloqué (quota, slot, système saturé, vaisseaux manquants…), `why` = raison. */
 export type AutoExploDecision = { status: "lancer"; plan: FleetPlan } | { status: "vol" } | { status: "menace" } | { status: "attente"; why: string };
-/** Calcul pur (aucun POST, aucune mutation de s) : une seule expédition à la fois, jusqu'au retour complet de la précédente. */
+/** Expéditions en vol ou pas encore rentrées (le plus grand des deux compteurs : `inFlight` et les flottes `expedition` de l'état). */
+export const exploEnVol = (s: State) => Math.max(s.expedition?.inFlight ?? 0, (s.fleets ?? []).filter((f) => f.mission === "expedition").length);
+/** Calcul pur (aucun POST, aucune mutation de s) : EXPLO_AUTO_COUNT expéditions au plus, une place se libère au retour complet d'une flotte. */
 export function autoExploDecision(s: State, threatened: Set<string>): AutoExploDecision {
   if (!s.expedition?.unlocked) return { status: "attente", why: "Expéditions non débloquées" };
-  if (s.expedition.inFlight > 0 || (s.fleets ?? []).some((f) => f.mission === "expedition")) return { status: "vol" };
+  if (exploEnVol(s) >= EXPLO_AUTO_COUNT) return { status: "vol" };
   if (threatened.has(PERE)) return { status: "menace" };
   try { return { status: "lancer", plan: planExpedition(s, "opti", EXPLO_AUTO_HOURS) }; }
   catch (e: any) { return { status: "attente", why: e.message }; }
@@ -62,7 +65,7 @@ export function autoExploDecision(s: State, threatened: Set<string>): AutoExploD
 
 let exploEvalAt = 0, exploSentAt = 0, exploKoAt = 0;
 let exploAlerted = ""; // dernière raison d'attente signalée : pas deux fois la même, réarmée dès que le blocage est levé
-/** Appelé depuis watch() : lance l'expédition opti quand aucune n'est en vol. Ne POSTe jamais en boucle (garde 1 min, 5 min après un succès, 15 min après un échec). */
+/** Appelé depuis watch() : lance une expédition opti tant qu'il y en a moins de EXPLO_AUTO_COUNT en vol (une par passage, 5 min d'écart). Ne POSTe jamais en boucle (garde 1 min, 5 min après un succès, 15 min après un échec). */
 export async function autoExploTick(s: State, threatened: Set<string>) {
   if (!flags.explo || !s.expedition?.unlocked) return; // /pause coupe le flag
   const now = Date.now();
@@ -98,13 +101,13 @@ export function autoExploSummary(s: State): string {
   const head = `🧭 Expédition auto : ${on ? "ON" : "OFF"}${isPaused() ? " ⏸ EN PAUSE (/resume)" : ""}`;
   if (!e?.unlocked) return `${head}\nExpéditions non débloquées.`;
   const heures = Math.max(1, Math.min(EXPLO_AUTO_HOURS, e.maxHours));
-  const lines = [head, `Flotte : 10 éclaireurs + 100 GT · ${heures} h, depuis Père vers la position ${e.position}`];
+  const lines = [head, `${EXPLO_AUTO_COUNT} expédition(s) en même temps · flotte : 10 éclaireurs + 100 GT · ${heures} h, depuis Père vers la position ${e.position}`];
   const vol = (s.fleets ?? []).filter((f) => f.mission === "expedition");
   const d = autoExploDecision(s, threatenedPlanetIds(s, parseThreats(s)));
   if (vol.length || e.inFlight > 0) {
     lines.push(`En vol : ${e.inFlight}/${e.slots}` + vol.map((f) =>
       ` · flotte ${f.id}${f.arrivesAt && f.arrivesAt > now ? ` arrive dans ${etaStr(f.arrivesAt - now)}` : ""}${f.returnsAt && f.returnsAt > now ? ` · retour dans ${etaStr(f.returnsAt - now)}` : ""}`).join(""));
-    lines.push(on ? "La suivante partira au retour de celle-ci." : "Une fois activée, la suivante partira au retour de celle-ci.");
+    if (exploEnVol(s) >= EXPLO_AUTO_COUNT) lines.push(on ? "La suivante partira dès qu'une expédition sera rentrée." : "Une fois activée, la suivante partira dès qu'une expédition sera rentrée.");
   } else lines.push("Aucune expédition en vol.");
   lines.push(`Quota du jour : ${e.lanceesAujourdhui}/${e.maxPerPlayerPer24h} (reset à ${e.heureDeReset} h)`);
   if (d.status === "attente") lines.push(`Bloqué : ${d.why}`);
