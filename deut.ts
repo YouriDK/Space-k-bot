@@ -4,7 +4,7 @@
 // Cohérent avec l'auto-ravitaillement : quand le flag est actif, supplyTarget() plafonne sa cible de deut à DEUT_CAP (supply.ts).
 import type { Planet, State } from "./spacek-client.ts";
 import { PERE, CARGO, alert, flags, fleetResultStr, fmtNum, isPaused, log, num, prepareFleet, same, sendFleet, shipsStr } from "./core.ts";
-import { fleetBuildReserved } from "./fleetbuild.ts";
+import { planetReserved, reservedWhy } from "./reserve.ts";
 import { parseThreats, threatenedPlanetIds } from "./threats.ts";
 
 // ================= CONFIG =================
@@ -34,7 +34,7 @@ export function planDeutAuto(s: State, threatened: Set<string>): DeutStep[] {
     if (!pere) { wait("Père introuvable"); continue; }
     if (threatened.has(PERE)) { wait("Père menacée"); continue; }
     if (threatened.has(p.id)) { wait("colonie menacée"); continue; }
-    if (fleetBuildReserved(p.id)) { wait("réservée par /fleetbuild"); continue; }
+    if (planetReserved(p.id)) { wait(reservedWhy(p.id)); continue; } // /fleetbuild ou financement de bâtiment
     // Aller OU retour : pendant le trajet retour les transporteurs ne sont pas à quai, ce n'est pas « aucun transporteur sur place »
     if (s.fleets.some((f) => f.mission === "transport" && f.origin?.planetId === p.id && (f.phase !== "outbound" || same(f.target?.coords, pere.coords)))) { wait("transport déjà en cours depuis la colonie"); continue; }
     if (excess < DEUT_COLLECT_MIN) { steps.push({ ...base, status: "rien", why: excess ? `excédent ${fmtNum(excess)} < ${fmtNum(DEUT_COLLECT_MIN)}` : `sous le plafond de ${capStr}` }); continue; }

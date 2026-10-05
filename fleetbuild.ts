@@ -2,7 +2,8 @@
 // Père envoie le COÛT TOTAL (N × coût unitaire, sans déduire le stock de la colonie : l'auto-construction peut le dépenser
 // pendant le vol) en une seule flotte transport (GT d'abord, PT en complément), puis la commande attend l'arrivée et lance
 // `api.ships` dès que le stock de la colonie couvre le coût. Cible = Père : pas de transport, construction immédiate.
-// Entre l'arrivée et le lancement, la planète est RÉSERVÉE (fleetBuildReserved) : autobuild, /next et collect n'y touchent pas.
+// Entre l'arrivée et le lancement, la planète est RÉSERVÉE (fleetBuildReserved, via reserve.ts) : autobuild, /next, collect, autodeut,
+// autosupply et flotte auto n'y touchent pas.
 // Stock insuffisant ou refus du jeu : la commande reste (jamais d'abandon automatique), un essai de POST par minute au plus,
 // une alerte par raison. /pause ne suspend pas ces commandes (ordres manuels, comme /next). Persisté dans fleet-build.json.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";

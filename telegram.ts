@@ -14,8 +14,10 @@ import { planExpedition, autoExploSummary, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP } f
 import { piratesSummary } from "./pirates.ts";
 import { tipFor, tipsIndex } from "./tips.ts";
 import { salvageSummary } from "./salvage.ts";
-import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
-import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, BUILDING_KEYS } from "./autobuild.ts";
+import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, gravitonStatus, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
+import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, setPlanDefault, financementOn, gravitonOn, BUILDING_KEYS } from "./autobuild.ts";
+import { buildFundSummary, cancelFund, fundOrders } from "./buildfund.ts";
+import { autoFleetSummary, setAutoFleetEnabled, setAutoFleetKey, setAutoFleetMax } from "./autofleet.ts";
 import { autoDeutSummary, DEUT_CAP } from "./deut.ts";
 import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
 import { cancelFleetBuild, costShort, fleetBuildMax, fleetBuildOrders, fleetBuildSummary, parseFleetBuildArgs, planFleetBuild, runFleetBuild, shipChoices, shipName } from "./fleetbuild.ts";
@@ -302,6 +304,8 @@ function planSupply(s: State, to: string, want: Res): { plans: FleetPlan[]; note
   if (!plans.length) throw new Error("Aucun transporteur sur Père");
   return { plans, notes };
 }
+/** /plan complet : auto-construction, Graviton, financements en cours. */
+const planText = (s: State) => `${planSummary(s)}\n${gravitonStatus(s)}\n\n${buildFundSummary(s)}`;
 const coordsOf = (s: State, q: string) => { try { return planetOrThrow(s, q).coords; } catch { return parseCoords(q); } };
 const need = (toks: string[], n: number, usage: string) => { if (toks.length < n) throw new Error(`Usage : ${usage}`); };
 
@@ -323,7 +327,7 @@ Toutes les attaques, scans, expéditions et ravitaillements partent de Père.
 /next — mettre une construction en attente : elle part dès que la file se libère (même la nuit)
 /next <planète> labo — pareil pour la recherche (bouton 🔬 aussi dans la liste de la planète)
 /nexts — ce qui est en attente sur chaque planète
-/plan — auto-construction : planètes actives, palier, prochain bâtiment
+/plan — auto-construction : planètes actives, prochain bâtiment, besoin financé par Père, Graviton
 /batiments <planète> — les 12 bâtiments : niveau, coût, durée
 /flags — état des automatismes
 
@@ -374,7 +378,9 @@ PT d'abord (rapides), GT en complément dans une 2e flotte.
 /autobuild <planète> off — désactive
 /autobuild <planète> — état
 /autobuild off — désactive toutes les planètes
-Objectifs dans l'ordre : robots 12 > labo 10 > chantier 8 > mines 20 (métal, cristal, deut) > silo 5. Pas les sous → suivant ; réservoir plein → on l'agrandit avant la mine ; énergie qui passerait en négatif → centrale d'abord. 2 min de délai après chaque fin. Détail : /plan
+Objectifs dans l'ordre : labo 10 > nanites 4 > robots 12 > chantier 8 > mines 20 (métal, cristal, deut) > silo 5 ; Père : labo 12. Énergie négative → centrale d'abord ; pas les sous → suivant ; réservoir plein → on l'agrandit avant la mine (en dernier si la mine est au plafond) ; énergie qui passerait en négatif → centrale d'abord. 2 min de délai après chaque fin. Détail : /plan
+/autobuild finance on|off — Père finance le besoin des colonies (ON par défaut) : il livre le manque puis le bâtiment est lancé · /autobuild finance annule <planète>
+/autobuild graviton on|off — Graviton lancé depuis Père dès que le labo 12 le débloque (ON par défaut)
 
 ━━━━━━━━━━━━━━━━━━━━
 🚀 CONSTRUCTION DE FLOTTE (payée par Père, récap + ✅)
@@ -383,6 +389,8 @@ Objectifs dans l'ordre : robots 12 > labo 10 > chantier 8 > mines 20 (métal, cr
 /fleetbuild <planète> <vaisseau> <qté> — direct (ex. /fleetbuild fils croiseurs 50)
 Père envoie le coût exact (GT puis PT) ; à l'arrivée le chantier de la planète lance la construction. Sur Père : lancement immédiat.
 /fleetbuild liste — commandes en cours · /fleetbuild annule <n°> — retire (sans rappeler le transport)
+/autofleet — flotte automatique (ON par défaut sur les 5 planètes) : un type par planète, payé par le SURPLUS de Père au-dessus du plancher des bâtiments
+/autofleet <planète> on|off · /autofleet <planète> <vaisseau> [<n>|max] · /autofleet <planète> max <n>|illimite
 
 ━━━━━━━━━━━━━━━━━━━━
 🛡 DÉFENSE AUTO
@@ -426,7 +434,7 @@ Actions (confirmation ✅/❌)
 
 Immédiat
 /recall <fleetId> · /token <refresh_token>
-/save on|off · /autoexplo [on|off] · /autosupply [<planète>] [on|off] · /autodeut [on|off] · /collect on|off · /autobuild <planète> on|off · /pause · /resume
+/save on|off · /autoexplo [on|off] · /autosupply [<planète>] [on|off] · /autodeut [on|off] · /collect on|off · /autobuild <planète> on|off · /autobuild finance|graviton on|off · /autofleet [<planète> …] · /pause · /resume
 
 <planète> = nom (Père), id (pl_2w) ou coords (6:4). Bâtiments : ${BUILDING_KEYS.join(", ")}`;
 
@@ -507,7 +515,7 @@ async function handle(text: string, chatId: string) {
         (p.buildQueue ? `Lancé dès la fin de ${p.buildQueue.key} (dans ${fmtDur(p.buildQueue.finishesAt - s.now)}).` : "La file est libre : lancement au prochain passage (< 1 min)."), chatId);
     }
     case "/nexts": case "/attente": return send(await withState(nextSummary), chatId);
-    case "/plan": return send(await withState(planSummary), chatId);
+    case "/plan": return send(await withState(planText), chatId);
     case "/batiments": case "/buildings": { need(args, 1, "/batiments <planète>"); return send(await withState((s) => buildingsSummary(planet(s, args[0]))), chatId); }
     case "/autobuild": {
       // /autobuild <planète…> on|off · /autobuild <planète…> (état) · /autobuild off (désactive toutes les planètes). Pas d'interrupteur global.
@@ -515,17 +523,64 @@ async function handle(text: string, chatId: string) {
       const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
       const asBool = (x: string) => /^(on|1|true)$/i.test(x);
       const s = await getState();
+      const sub = args[0].toLowerCase();
+      // /autobuild finance on|off|annule <planète> · /autobuild graviton on|off (réglages globaux, build-plan.json)
+      if (sub === "finance" || sub === "financement") {
+        const v = (args[1] ?? "").toLowerCase();
+        if (v === "annule" || v === "annuler" || v === "cancel") {
+          need(args, 3, "/autobuild finance annule <planète>");
+          const p = planet(s, args.slice(2).join(" "));
+          const o = cancelFund(p.id);
+          if (!o) throw new Error(`Aucun financement en cours pour ${p.name}`);
+          return send(`🗑 Financement ${p.name} (${o.name} niv. ${o.next}) retiré. Le transport éventuel n'est PAS rappelé${o.fleetId ? ` (/recall ${o.fleetId})` : ""} ; les ressources livrées restent sur place.\n\n${buildFundSummary(s)}`, chatId);
+        }
+        if (v && !isOnOff(v)) throw new Error("Usage : /autobuild finance on|off · /autobuild finance annule <planète>");
+        if (v) setPlanDefault("financement", asBool(v), s);
+        const on = financementOn(loadPlan(s)), n = fundOrders().length;
+        return send(`🏗💰 Financement des colonies par Père : ${on ? "ON" : "off"}${!on && n ? ` — ${n} commande(s) en cours vont au bout (/autobuild finance annule <planète>)` : ""}\n\n${buildFundSummary(s)}`, chatId);
+      }
+      if (sub === "graviton") {
+        const v = (args[1] ?? "").toLowerCase();
+        if (v && !isOnOff(v)) throw new Error("Usage : /autobuild graviton on|off");
+        if (v) setPlanDefault("graviton", asBool(v), s);
+        return send(`${gravitonStatus(s)}${gravitonOn(loadPlan(s)) ? "" : "\n(off : rien n'est lancé automatiquement)"}`, chatId);
+      }
       if (args.length === 1 && isOnOff(args[0])) {
-        if (asBool(args[0])) return send("L'auto-construction s'active par planète : /autobuild cousin on, /autobuild bl on…\n\n" + planSummary(s), chatId);
+        if (asBool(args[0])) return send("L'auto-construction s'active par planète : /autobuild cousin on, /autobuild bl on…\n\n" + planText(s), chatId);
         for (const p of s.planets) setPlanetEnabled(p.id, false, s);
-        return send("Auto-construction désactivée sur toutes les planètes.\n\n" + planSummary(s), chatId);
+        return send("Auto-construction désactivée sur toutes les planètes.\n\n" + planText(s), chatId);
       }
       const last = args[args.length - 1];
       const nameParts = isOnOff(last) ? args.slice(0, -1) : args;
       const p = planet(s, nameParts.join(" "));
       if (isOnOff(last)) setPlanetEnabled(p.id, asBool(last), s);
       const on = planetPlan(loadPlan(s), p.id).enabled;
-      return send(`Auto-construction ${p.name} : ${on ? "ON ✅" : "off"}${on && !getFlags().autobuild ? " (⏸ tout est en pause → /resume)" : ""}\n\n${planSummary(s)}`, chatId);
+      return send(`Auto-construction ${p.name} : ${on ? "ON ✅" : "off"}${on && !getFlags().autobuild ? " (⏸ tout est en pause → /resume)" : ""}\n\n${planText(s)}`, chatId);
+    }
+    case "/autofleet": case "/flotte_auto": {
+      // /autofleet (résumé) · <planète…> on|off · <planète…> max <n>|illimite · <planète…> <vaisseau…> [<n>|max] — immédiat, sans confirmation
+      const s = await getState();
+      if (!args.length) return send(autoFleetSummary(s), chatId);
+      const last = args[args.length - 1].toLowerCase();
+      const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
+      const illimite = (x: string) => /^(illimit[ée]e?|aucun|none|infini)$/i.test(x);
+      let head: string;
+      if (isOnOff(last) && args.length >= 2) {
+        const p = planet(s, args.slice(0, -1).join(" "));
+        const c = setAutoFleetEnabled(p.id, /^(on|1|true)$/i.test(last));
+        head = `🤖 Flotte auto ${p.name} : ${c.enabled ? "ON" : "off"} (${shipName(c.key)})`;
+      } else if (args.length >= 3 && args[args.length - 2].toLowerCase() === "max" && (/^\d+$/.test(last) || illimite(last))) {
+        const p = planet(s, args.slice(0, -2).join(" "));
+        const c = setAutoFleetMax(p.id, illimite(last) ? null : Number(last));
+        head = `🤖 Flotte auto ${p.name} : ${shipName(c.key)} · max ${c.max ?? "illimité"}`;
+      } else {
+        const hasN = args.length >= 3 && (/^\d+$/.test(last) || last === "max" || illimite(last));
+        const { p, key } = parseFleetBuildArgs(s, hasN ? args.slice(0, -1) : args);
+        if (!key) return send(autoFleetSummary(s), chatId);
+        const c = setAutoFleetKey(p, key, hasN ? (/^\d+$/.test(last) ? Number(last) : null) : undefined);
+        head = `🤖 Flotte auto ${p.name} : ${shipName(c.key)} · max ${c.max ?? "illimité"} · ${c.enabled ? "ON" : "off"}`;
+      }
+      return send(`${head}\n\n${autoFleetSummary(s)}`, chatId);
     }
     case "/status": return send(await withState(statusSummary), chatId);
     case "/planets": return send(await withState(planetsSummary), chatId);

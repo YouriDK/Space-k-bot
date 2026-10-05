@@ -11,6 +11,7 @@ import {
 } from "./core.ts";
 import { parseThreats, threatenedPlanetIds } from "./threats.ts";
 import { DEUT_CAP } from "./deut.ts";
+import { planetReserved, reservedWhy } from "./reserve.ts";
 
 // ================= CONFIG =================
 // SUPPLY = surcharge par planète, fusionnée sur la cible par défaut.
@@ -88,6 +89,7 @@ export function planSupplyAuto(s: State, threatened: Set<string>, ids: string[])
     if (!pere) { wait("Père introuvable"); continue; }
     if (threatened.has(PERE)) { wait("Père menacée"); continue; }
     if (threatened.has(p.id)) { wait("colonie menacée"); continue; } // jamais vers une planète menacée
+    if (planetReserved(p.id)) { wait(reservedWhy(p.id)); continue; } // /fleetbuild ou financement de bâtiment en cours
     if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && same(f.target?.coords, p.coords))) { wait("transport déjà en route"); continue; }
     const dispo = (k: keyof Res) => Math.floor(Math.max(0, stock[k] - (k === "deuterium" ? DEUT_RESERVE : 0)) / 1000) * 1000;
     let cargo: Res = { metal: Math.min(need.metal, dispo("metal")), crystal: Math.min(need.crystal, dispo("crystal")), deuterium: Math.min(need.deuterium, dispo("deuterium")) };

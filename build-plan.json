@@ -2,12 +2,16 @@
   "defaults": {
     "objectifs": [
       {
-        "key": "robotFactory",
-        "max": 12
-      },
-      {
         "key": "researchLab",
         "max": 10
+      },
+      {
+        "key": "naniteFactory",
+        "max": 4
+      },
+      {
+        "key": "robotFactory",
+        "max": 12
       },
       {
         "key": "shipyard",
@@ -35,10 +39,16 @@
       "fusionPlant",
       "solarPlant"
     ],
-    "graceMs": 120000
+    "graceMs": 120000,
+    "financement": true,
+    "graviton": true,
+    "version": 2
   },
   "pl_2w": {
-    "enabled": false
+    "enabled": false,
+    "plafonds": {
+      "researchLab": 12
+    }
   },
   "pl_rn": {
     "enabled": false

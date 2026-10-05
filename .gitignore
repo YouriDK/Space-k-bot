@@ -14,6 +14,8 @@ flags.json
 next-build.json
 supply.json
 fleet-build.json
+build-fund.json
+auto-fleet.json
 
 # Relevé de galaxie (contient les pseudos et identifiants des autres joueurs)
 galaxy-snapshot.json

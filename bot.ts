@@ -2,7 +2,8 @@
 //   npx tsx --env-file=.env bot.ts watch     → boucle complète (selon flags)
 //   npx tsx --env-file=.env bot.ts status    → résumé texte
 // Modules : core.ts (client, flags, helpers) · threats.ts · presets.ts · scan.ts · expedition.ts · notify.ts · autobuild.ts · nextbuild.ts
-//           supply.ts (auto-ravitaillement par colonie) · deut.ts (plafond de deut des colonies → Père) · fleetbuild.ts (vaisseaux construits en colonie, payés par Père) · pirates.ts · salvage.ts
+//           supply.ts (auto-ravitaillement par colonie) · deut.ts (plafond de deut des colonies → Père) · fleetbuild.ts (vaisseaux construits en colonie, payés par Père)
+//           buildfund.ts (bâtiments des colonies financés par Père) · autofleet.ts (flotte automatique sur le surplus de Père) · reserve.ts · pirates.ts · salvage.ts
 //
 // Par défaut tout est en MODE OBSERVATION (SAVE_ARMED / COLLECT_ENABLED = false) : le bot calcule, logue et notifie ce qu'il ferait,
 // mais n'émet aucun POST automatique. Auto-construction et auto-ravitaillement : désactivés tant qu'aucune planète n'est activée.
@@ -19,7 +20,10 @@ import { salvageTick } from "./salvage.ts";
 import { nextBuildTick } from "./nextbuild.ts";
 import { autoExploTick } from "./expedition.ts";
 import { supplyEnabled, supplyTarget, supplyTick } from "./supply.ts";
-import { fleetBuildReserved, fleetBuildTick } from "./fleetbuild.ts";
+import { fleetBuildTick } from "./fleetbuild.ts";
+import { planetReserved } from "./reserve.ts";
+import { buildFundTick } from "./buildfund.ts";
+import { autoFleetTick } from "./autofleet.ts";
 import { autoDeutTick } from "./deut.ts";
 export * from "./core.ts";
 export * from "./threats.ts";
@@ -120,7 +124,7 @@ async function fleetSaveTick(s: State, threats: Threat[]) {
  *  qu'en mémoire (`saves`) : redémarrer oublierait le rappel et la flotte se poserait sur la planète de repli.
  *  Saves simulés (observation, aucun slot) : rien de perdu. Save armé et décollage dans moins de RESTART_GUARD_MS :
  *  le bot serait en plein redémarrage au moment de décoller. Le reste de l'état (flags, /next, /fleetbuild, supply,
- *  build-plan, seen) est persisté dans des *.json ; confirmations ✅ et saisies en attente sont seulement à refaire.
+ *  build-plan, build-fund, auto-fleet, seen) est persisté dans des *.json ; confirmations ✅ et saisies en attente sont seulement à refaire.
  *  Sans état (jeu injoignable) : seuls les saves en mémoire sont vérifiés — une mise à jour doit pouvoir réparer le bot. */
 const RESTART_GUARD_MS = 5 * 60_000;
 export function restartBlockers(s?: State): string[] {
@@ -159,7 +163,7 @@ async function collect(s: State, threatened: Set<string>) {
   const pere = s.planets.find((p) => p.id === PERE);
   if (!pere || threatened.has(PERE)) return;
   for (const p of s.planets) {
-    if (p.id === PERE || threatened.has(p.id) || fleetBuildReserved(p.id)) continue; // /fleetbuild : ressources livrées, pas encore lancées
+    if (p.id === PERE || threatened.has(p.id) || planetReserved(p.id)) continue; // /fleetbuild ou financement : ressources réservées
     const want = collectWant(p);
     if (!want) continue;
     if (s.fleets.some((f) => f.mission === "transport" && f.phase === "outbound" && f.origin?.planetId === p.id && same(f.target?.coords, pere.coords))) continue;
@@ -278,10 +282,12 @@ export async function watch() {
       try { notifyTick(s, threats); } catch (e: any) { log("NOTIFY KO", e.message); }
       const threatened = threatenedPlanetIds(s, threats);
       await fleetBuildTick(s).catch((e) => alert("FLEETBUILD KO", e.message)); // chaque poll, avant collect / next / autobuild (ressources livrées)
+      await buildFundTick(s, threatened).catch((e) => alert("FINANCEMENT KO", e.message)); // bâtiments des colonies payés par Père : avant la flotte auto
       if (Date.now() - lastSupply > SUPPLY_TICK_MS) { lastSupply = Date.now(); await supplyTick(s, threatened).catch((e) => alert("SUPPLY KO", e.message)); }
       await autoExploTick(s, threatened).catch((e) => alert("EXPLO AUTO KO", e.message));
       await autoDeutTick(s, threatened).catch((e) => alert("DEUT KO", e.message)); // garde interne : une évaluation par minute
       if (Date.now() - lastCollect > COLLECT_EVERY_MS) { lastCollect = Date.now(); await collect(s, threatened).catch((e) => alert("COLLECT KO", e.message)); }
+      await autoFleetTick(s, threatened).catch((e) => alert("FLOTTE AUTO KO", e.message)); // surplus de Père seulement, après les bâtiments
       await nextBuildTick(s).catch((e) => log("NEXT KO", e.message));
       await autobuildTick(s).catch((e) => alert("AUTOBUILD KO", e.message));
       await sleep(pollDelay(s, threats));

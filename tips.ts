@@ -8,6 +8,7 @@ import { SUPPLY_EVERY_H, supplyTargetStr } from "./supply.ts";
 import { EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
 import { OBJECTIFS } from "./autobuild.ts";
 import { DEUT_RESERVE, num } from "./core.ts";
+import { AUTOFLEET_EVERY_MS, AUTOFLEET_LOT_MS, AUTOFLEET_MIN_MS } from "./autofleet.ts";
 
 type Tip = { names: string[]; group: string; usage: string; desc: string; detail?: string | (() => string) };
 
@@ -117,7 +118,7 @@ const TIPS: Tip[] = [
       `Plafond de deut de ${fmtN(DEUT_CAP)} (DEUT_CAP) sur chaque planète autre que Père : l'excédent repart vers Père avec les transporteurs SUR LA COLONIE (GT puis PT, une seule flotte, deut seul). Désactivé par défaut.`,
       `/autodeut on — active (immédiat, sans confirmation) · /autodeut off — désactive`,
       `/autodeut — état : on/off, plafond, puis par colonie le deut, l'excédent, les transporteurs sur place et ce qui partirait (ou pourquoi rien).`,
-      `Une évaluation par minute ; rien sous ${fmtN(DEUT_COLLECT_MIN)} d'excédent (DEUT_COLLECT_MIN). Rien si Père ou la colonie est menacée, si la colonie est réservée par /fleetbuild ou si un transport part déjà d'elle vers Père. Le carburant est pris sur les ${fmtN(DEUT_CAP)} qui restent.`,
+      `Une évaluation par minute ; rien sous ${fmtN(DEUT_COLLECT_MIN)} d'excédent (DEUT_COLLECT_MIN). Rien si Père ou la colonie est menacée, si la colonie est réservée (/fleetbuild, financement de bâtiment) ou si un transport part déjà d'elle vers Père. Le carburant est pris sur les ${fmtN(DEUT_CAP)} qui restent.`,
       `Aucun transporteur sur place : pas d'envoi, une seule alerte par colonie (déploie des GT : /deploy pere <planète> largeCargo=2). Pas de slot libre : nouvel essai à la minute suivante. Envoi refusé : alerte, nouvel essai vers cette colonie 15 min plus tard. /pause coupe l'automatisme, /resume le rétablit.`,
       `Sur les colonies en auto-ravitaillement, la cible de deut est alors plafonnée à ${fmtN(DEUT_CAP)} (pas d'aller-retour).`,
     ].join("\n") },
@@ -133,8 +134,8 @@ const TIPS: Tip[] = [
     ].join("\n") },
   { names: ["nexts", "attente"], group: G.build, usage: "/nexts", desc: "ce qui est en attente par planète",
     detail: "Liste les ordres /next en attente : la recherche et chaque planète." },
-  { names: ["plan"], group: G.build, usage: "/plan", desc: "auto-construction : état et prochain bâtiment",
-    detail: "Planètes où /autobuild est actif, objectifs, règles (réservoir plein, énergie), et pour chaque planète le prochain bâtiment choisi avec son coût, sa durée et la raison, ou les bâtiments sautés." },
+  { names: ["plan"], group: G.build, usage: "/plan", desc: "auto-construction : état, prochain bâtiment, financements",
+    detail: "Planètes où /autobuild est actif, objectifs, règles (énergie, réservoir plein), état du financement par Père et de Graviton auto, puis pour chaque planète : plafonds propres (ex. Père labo 12), réservation éventuelle, prochain bâtiment choisi (coût, durée, raison), « besoin » à financer par Père et bâtiments sautés. En fin : l'état de Graviton et les commandes de financement en cours (manque, voyages, livré)." },
   { names: ["batiments", "buildings"], group: G.build, usage: "/batiments <planète>", desc: "bâtiments : niveau, coût, durée",
     detail: "Pour une planète : énergie, champs utilisés, et chaque bâtiment constructible avec niveau actuel → suivant, coût, durée, 🔒 si verrouillé (et ce qui manque). Lecture seule ; pour construire : /build ou /next." },
   { names: ["fleetbuild"], group: G.build, usage: "/fleetbuild [<planète> [<vaisseau> <qté>]]", desc: "vaisseaux construits sur une planète, payés par Père",
@@ -146,16 +147,38 @@ const TIPS: Tip[] = [
       `Confirmé : Père envoie le coût total exact en une flotte transport (GT puis PT), sans déduire le stock de la planète, en gardant ${fmtN(DEUT_RESERVE)} deut. Cible = Père : pas de transport, lancement immédiat.`,
       `Refus avant tout envoi, chiffres à l'appui : vaisseau verrouillé, pas de chantier, Père trop pauvre (max finançable), transporteurs insuffisants (combien il en faut), aucun slot.`,
       `À l'arrivée, dès que le stock de la planète couvre le coût, le chantier lance la construction (🚀). Stock insuffisant ou refus du jeu : la commande reste, nouvel essai chaque minute, une alerte par raison, jamais d'abandon automatique.`,
-      `Entre l'arrivée et le lancement, la planète est réservée : ni auto-construction, ni /next, ni collecte n'y touchent. /pause ne suspend pas ces commandes.`,
+      `Entre l'arrivée et le lancement, la planète est réservée : ni auto-construction, ni /next, ni collecte, ni autodeut, ni autosupply, ni flotte auto n'y touchent. /pause ne suspend pas ces commandes.`,
       `/fleetbuild liste — commandes en cours (n°, planète, quantité, état) · /fleetbuild annule <n°> — retire la commande, sans rappeler le transport (/recall pour ça).`,
       PLANETE,
     ].join("\n") },
   { names: ["autobuild"], group: G.build, usage: "/autobuild [<planète>] on|off", desc: "auto-construction par planète",
     detail: () => [
-      `Enchaîne les bâtiments d'une planète selon les objectifs : ${OBJECTIFS.map((o) => `${o.key} ${o.max}`).join(" > ")}.`,
+      `Enchaîne les bâtiments d'une planète selon les objectifs : ${OBJECTIFS.map((o) => `${o.key} ${o.max}`).join(" > ")}. Père : labo 12 (plafond propre, débloque Graviton).`,
       `/autobuild fils on · /autobuild fils off · /autobuild fils (état) · /autobuild off (désactive toutes les planètes)`,
-      `Pas les ressources → on passe au suivant. Réservoir plein → on l'agrandit avant la mine. Énergie qui passerait en négatif → centrale d'abord. Délai de quelques minutes après chaque fin.`,
-      `Les objectifs se règlent dans build-plan.json (rechargé à chaud). Sans confirmation. /plan montre l'état ; /pause coupe aussi l'auto-construction.`,
+      `Énergie déjà négative → centrale d'abord. Pas les ressources → on passe au suivant. Réservoir plein → on l'agrandit avant la mine ; en dernier, réservoir plein alors que la mine est au plafond → agrandi, payé sur place. Énergie qui passerait en négatif → centrale d'abord. Délai de quelques minutes après chaque fin.`,
+      `Financement (/autobuild finance, ON par défaut) : le premier bâtiment écarté faute de ressources est le « besoin » ; Père le finance (/tips finance). Graviton auto : /autobuild graviton on|off (ON par défaut).`,
+      `Les objectifs se règlent dans build-plan.json (rechargé à chaud ; plafonds par planète dans « plafonds »). Sans confirmation. /plan montre l'état ; /pause coupe aussi l'auto-construction, le financement et Graviton auto.`,
+    ].join("\n") },
+
+  { names: ["finance", "financement"], group: G.build, usage: "/autobuild finance on|off|annule <pl>", desc: "Père finance les bâtiments des colonies (ON par défaut)",
+    detail: () => [
+      `Quand une colonie à autobuild activé a un « besoin » (premier bâtiment de son ordre de décision écarté UNIQUEMENT faute de ressources), Père lui livre le manque (coût − stock de la colonie, recalculé à chaque voyage) puis le bot lance le bâtiment dès que le stock le couvre et que la file est libre. Une commande au plus par colonie ; jamais pour Père (il paie sur place).`,
+      `Voyages : GT puis PT à quai sur Père, stock de Père moins ${fmtN(DEUT_RESERVE)} deut, un slot libre ; plusieurs voyages si la soute ne suffit pas, un seul en vol à la fois par commande. Rien vers une planète menacée ni depuis Père menacé.`,
+      `Dès qu'une commande existe, la colonie est réservée jusqu'au lancement : ni autobuild, ni /next, ni collecte, ni autodeut, ni autosupply, ni flotte auto n'y touchent. La flotte auto attend tant qu'un financement manque de ressources.`,
+      `Besoin disparu (niveau atteint, bâtiment lancé à la main, autobuild désactivé) : commande retirée avec alerte, les ressources restent sur place. Refus du jeu : nouvel essai chaque minute, une alerte par raison.`,
+      `/autobuild finance on|off — allumé par défaut ; off = plus de nouvelle commande, celles en cours vont au bout · /autobuild finance — état · /autobuild finance annule <planète> — retire la commande (le transport n'est pas rappelé). Détail dans /plan. /pause suspend tout.`,
+    ].join("\n") },
+  { names: ["graviton"], group: G.build, usage: "/autobuild graviton on|off", desc: "Graviton lancé automatiquement (ON par défaut)",
+    detail: "Dès qu'aucune recherche n'est en cours et que Graviton apparaît dans les recherches disponibles (labo de Père à 12), le bot la lance depuis Père, avant toute recherche mise en attente par /next. Refus du jeu (ressources, énergie…) : une alerte par raison, nouvel essai toutes les 10 min. Une fois lancée : alerte, et on n'y revient plus. Son coût entre dans le plancher de Père (/autofleet). /autobuild graviton — état. /pause la suspend." },
+  { names: ["autofleet", "flotte_auto"], group: G.build, usage: "/autofleet [<planète> …]", desc: "flotte automatique sur le surplus de Père (ON par défaut)",
+    detail: () => [
+      `Un type de vaisseau par planète, construit sur son chantier et payé par Père, uniquement avec le SURPLUS au-dessus du plancher : le coût du prochain bâtiment de chaque planète à autobuild (besoin des colonies, prochain objectif de Père), plus Graviton s'il est visible et pas lancé, plus ${fmtN(DEUT_RESERVE)} deut. Rien tant qu'un financement de bâtiment attend.`,
+      `Par défaut, toutes activées : BetweenLands GT, Cousin croiseurs, Fils destructeurs, Oncle éclaireurs, Père VB, sans limite.`,
+      `Une décision toutes les ${Math.round(AUTOFLEET_EVERY_MS / 60_000)} min, un lot par décision, pour la planète au chantier libre servie le moins récemment. Lot ≈ ${Math.round(AUTOFLEET_LOT_MS / 3_600_000)} h de chantier au plus (le chantier se libère pour ses améliorations), limité aussi par le surplus, les transporteurs à quai sur Père et le max ; rien sous ${Math.round(AUTOFLEET_MIN_MS / 60_000)} min de chantier sauf si le max le limite (AUTOFLEET_EVERY_MIN, AUTOFLEET_LOT_H, AUTOFLEET_MIN_LOT_MIN).`,
+      `Lancement comme /fleetbuild : transport depuis Père puis lancement à l'arrivée (visible dans /fleetbuild liste), direct sur Père. Une alerte par lot.`,
+      `/autofleet — résumé : par planète type, on/off, à quai, en file, prochain lot ou blocage ; plancher et surplus de Père.`,
+      `/autofleet fils on|off · /autofleet fils croiseurs [50|max] (change le type, refusé s'il est verrouillé ; 50 = nombre visé à quai, max = illimité) · /autofleet fils max 50|illimite. Immédiat, sans confirmation. /pause suspend ; rien si Père ou la planète est menacée.`,
+      PLANETE,
     ].join("\n") },
 
   // ---- Automatismes et défense
@@ -170,7 +193,7 @@ const TIPS: Tip[] = [
   { names: ["recall"], group: G.auto, usage: "/recall <fleetId>", desc: "rappelle une flotte (immédiat)",
     detail: "Rappel immédiat, sans confirmation (urgence). L'id de flotte se lit dans /fleets." },
   { names: ["pause"], group: G.auto, usage: "/pause", desc: "coupe tous les automatismes",
-    detail: "Coupe save, collect, recyclage, récupération, expédition auto, deut→Père, auto-construction et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
+    detail: "Coupe save, collect, recyclage, récupération, expédition auto, deut→Père, auto-construction (financement et Graviton auto compris), flotte auto et auto-ravitaillement. Les activations par planète (/autobuild, /autosupply) et leurs échéances sont conservées. /resume restaure l'état d'avant." },
   { names: ["resume"], group: G.auto, usage: "/resume", desc: "restaure les automatismes",
     detail: "Remet les automatismes dans l'état où ils étaient avant /pause." },
 
@@ -185,7 +208,7 @@ const TIPS: Tip[] = [
     detail: () => [
       "Récupère le dépôt GitHub sur le téléphone (clone créé au premier appel), liste les commits à déployer puis demande ✅.",
       "À la confirmation, update.sh sauvegarde le code actuel, copie les nouveaux fichiers et redémarre le bot. Le nouveau bot annonce « ✅ Mise à jour en place » ; sans signe de vie sous 90 s, l'ancienne version est remise automatiquement et un message ❌ arrive avec les dernières lignes de pm2 logs.",
-      "Jamais écrasés : les *.json (flags, build-plan, supply, fleet-build, package.json…), .env, refresh_token.txt, les *.jsonl. package.json différent → signalé, npm install reste à faire à la main.",
+      "Jamais écrasés : les *.json (flags, build-plan, supply, fleet-build, build-fund, auto-fleet, package.json…), .env, refresh_token.txt, les *.jsonl. package.json différent → signalé, npm install reste à faire à la main.",
       "Refusé si un fleet-save est en vol, ou si le save est armé et qu'une menace arrive dans moins de 5 min (revérifié au ✅). Les confirmations ✅ en attente sont perdues au redémarrage.",
       "Journal sur le téléphone : ~/spacek-bot/update.log · sauvegardes : ~/spacek-backups (10 dernières).",
     ].join("\n") },

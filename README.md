@@ -8,7 +8,9 @@ Il parle à l'API du jeu, tourne **24/7 sur un vieux téléphone Android** (Term
 - 🛡 **Fleet-save** — 10 s avant qu'une sonde ou une attaque ne touche une planète, toute la flotte décolle
   avec un maximum de ressources, puis rentre juste après le passage. L'attaquant trouve une planète vide.
 - 🏗 **Auto-construction** — enchaîne les bâtiments selon une liste d'objectifs, planète par planète,
-  en gérant l'énergie, les réservoirs pleins et les files occupées.
+  en gérant l'énergie, les réservoirs pleins et les files occupées ; Père finance ce que les colonies ne peuvent pas payer.
+- 🤖 **Flotte automatique** — un type de vaisseau par planète, construit avec le seul surplus de Père (les bâtiments d'abord).
+- 🔬 **Graviton automatique** — lancé depuis Père dès que son labo 12 le débloque.
 - ⏭ **`/next`** — met une construction ou une recherche en attente : elle part dès que la file se libère,
   y compris en pleine nuit.
 - ☠ **Veille pirates** — annonce chaque nouvelle cache/repaire/bastion/citadelle avec le raid conseillé (Telegram + Discord).
@@ -18,8 +20,10 @@ Il parle à l'API du jeu, tourne **24/7 sur un vieux téléphone Android** (Term
 **Ce que vous déclenchez depuis Telegram :** raids sur presets, scans d'un joueur entier, expéditions,
 ravitaillement entre planètes, constructions, recherches — chaque action réelle demande une confirmation ✅.
 
-Toutes les actions automatiques sont **désarmées par défaut** : le bot annonce ce qu'il *aurait* fait
-tant que vous ne l'avez pas armé (`/save on`, `/collect on`, `/autobuild <planète> on`…).
+Les actions automatiques historiques sont **désarmées par défaut** : le bot annonce ce qu'il *aurait* fait
+tant que vous ne l'avez pas armé (`/save on`, `/collect on`, `/autobuild <planète> on`…). Exceptions, **allumées par défaut**
+(décision du 05/10/2026) : le financement des bâtiments des colonies par Père, Graviton automatique et la flotte automatique
+(`/autobuild finance off`, `/autobuild graviton off`, `/autofleet <planète> off` pour les couper).
 
 > Le détail de l'API du jeu (auth, endpoints, formats, formules) est dans [`space-k-api.md`](space-k-api.md).
 > Chaque information y est marquée **[TESTÉ]** (appelée en live), **[BUNDLE]** (lue dans le code client),
@@ -144,9 +148,9 @@ Aucun bot Discord n'est nécessaire : le serveur reçoit un simple POST. **Seule
 | Fichier | Rôle |
 |---|---|
 | `.env` | Jetons, flags de départ, réglages (voir `.env.example`) — jamais commité |
-| `build-plan.json` | Objectifs d'auto-construction, activation par planète — rechargé à chaud |
+| `build-plan.json` | Objectifs d'auto-construction, plafonds et activation par planète, financement / Graviton (`defaults`) — rechargé à chaud, migré au chargement (`defaults.version`) |
 | `refresh_token.txt` | Jeton Keycloak, tourné automatiquement (`.bak` conservé) — jamais commité |
-| `flags.json`, `next-build.json`, `supply.json`, `fleet-build.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
+| `flags.json`, `next-build.json`, `supply.json`, `fleet-build.json`, `build-fund.json`, `auto-fleet.json`, `seen.json` | État persistant du bot, écrit à l'exécution |
 | `.version`, `.update-pending`, `update.log` | Mise à jour `/maj` : sha déployé, marqueur en attente de confirmation, journal |
 
 `HOME_PLANET` désigne la planète qui sert de hub (départ des raids, scans, expéditions et ravitaillements).
@@ -169,6 +173,7 @@ Les identifiants de planètes, clés de bâtiments et de vaisseaux viennent tous
 Tout démarre en **mode observation** : les flags `SAVE_ARMED`, `COLLECT_ENABLED`, `EXPLO_AUTO`, `DEUT_COLLECT_ENABLED` sont à `false`.
 Le bot calcule, logue et notifie « j'AURAIS décollé / envoyé », mais n'émet aucun POST automatique.
 Auto-construction et auto-ravitaillement n'ont pas de flag : ils s'activent planète par planète (`/autobuild <planète> on`, `/autosupply <planète> on`), rien n'est actif par défaut.
+Financement des colonies, Graviton auto et flotte auto sont, eux, **allumés par défaut** (sections 8d et 8e) ; `/pause` les suspend aussi.
 Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoexplo on`, `/autodeut on`, `/pause`, `/resume`) ; `/pause` coupe aussi l'expédition auto et le deut→Père et suspend aussi l'auto-construction et l'auto-ravitaillement sans toucher aux activations par planète.
 
 ### Modules
@@ -182,8 +187,11 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
 | `scan.ts` | Planètes d'un joueur (leaderboard + galaxie, cache 30 min), scans `/scan_<joueur>` |
 | `expedition.ts` | `/explo opti`, `/explo 911` et l'expédition permanente (`/autoexplo`) |
 | `notify.ts` | Événements entre deux polls (bâtiment / recherche / chantier terminés, sondage subi, impact) — ids persistés dans `seen.json` |
-| `autobuild.ts` | Auto-construction pilotée par `build-plan.json` |
-| `nextbuild.ts` | `/next` : construction et recherche mises en attente |
+| `autobuild.ts` | Auto-construction pilotée par `build-plan.json` (migration du plan, « besoin » de chaque planète) |
+| `buildfund.ts` | Bâtiments des colonies financés par Père (`/autobuild finance`), commandes persistées dans `build-fund.json` |
+| `autofleet.ts` | Flotte automatique (`/autofleet`) : plancher et surplus de Père, lots, réglages dans `auto-fleet.json` |
+| `reserve.ts` | Réservation d'une planète (`/fleetbuild` livré, financement en cours) : un seul test pour tous les automatismes |
+| `nextbuild.ts` | `/next` : construction et recherche mises en attente, retenue de la recherche, Graviton automatique |
 | `supply.ts` | Auto-ravitaillement par colonie depuis Père (`/autosupply`), échéances persistées dans `supply.json` |
 | `deut.ts` | Plafond de deut des colonies (`/autodeut`) : l'excédent repart vers Père, calcul pur `planDeutAuto` |
 | `fleetbuild.ts` | `/fleetbuild` : vaisseaux construits sur le chantier d'une colonie, ressources envoyées par Père, commandes persistées dans `fleet-build.json` |
@@ -221,12 +229,12 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
   Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même. `/pause` suspend tout, les échéances restent intactes.
   Sur une colonie active, la collecte (section 3) ne la redescend pas sous sa cible (pas d'aller-retour).
 - **Deut → Père** (`deut.ts`, `/autodeut on|off`, alias `/deut_auto`, flag `deut`, désactivé par défaut) : aucune colonie ne garde plus de **150 000 deut** (`DEUT_CAP`). Une évaluation par minute ; l'excédent part vers Père avec les transporteurs **sur la colonie** (GT puis PT, une seule flotte, deut seul), pourvu qu'il atteigne `DEUT_COLLECT_MIN` (10 000). Le carburant est pris sur les 150 000 qui restent.
-  Rien si Père ou la colonie est menacée, si la colonie est réservée par `/fleetbuild` ou si un transport en part déjà vers Père. Aucun transporteur sur place → une alerte `⛽` par colonie (pas d'envoi) ; envoi refusé → alerte `⛽ DEUT KO`, nouvel essai 15 min plus tard. `/autodeut` seul donne l'état. Avec le flag actif, la cible de deut de l'auto-ravitaillement est plafonnée à `DEUT_CAP`.
+  Rien si Père ou la colonie est menacée, si la colonie est réservée (`/fleetbuild`, financement de bâtiment) ou si un transport en part déjà vers Père. Aucun transporteur sur place → une alerte `⛽` par colonie (pas d'envoi) ; envoi refusé → alerte `⛽ DEUT KO`, nouvel essai 15 min plus tard. `/autodeut` seul donne l'état. Avec le flag actif, la cible de deut de l'auto-ravitaillement est plafonnée à `DEUT_CAP`.
 
 ### 3. Collecte (`collect`) — colonies → Père
 BetweenLands déborde (90 k métal pour 6 k de capacité). Toutes les 60 s, si une ressource dépasse `COLLECT_THRESHOLD` (90 %)
 de la capacité, le surplus au-dessus de `COLLECT_KEEP` (50 %) part vers Père avec les transporteurs sur place (GT puis PT).
-Jamais depuis/vers une planète menacée, pas de doublon.
+Jamais depuis/vers une planète menacée ni depuis une planète réservée (`/fleetbuild`, financement de bâtiment), pas de doublon.
 
 ### 4. Raids (`/p0`, `/p1`, `/p2`, `/p3`) — toujours depuis Père, « attendre l'allié » ✔ (`rallier: true`)
 | Commande | Composition |
@@ -296,23 +304,34 @@ Formats confirmés en live le 22/09 (`menaces`, `alertesVives`, `reports`, `arri
 - `[OBSERVATION]` : ce que le bot ferait si les flags étaient armés. ❌ erreurs (1 fois, puis toutes les 15 min max). 💓 heartbeat, 🚨 poll bloqué.
 Les ids déjà notifiés sont dans `seen.json` (pas de doublon après un restart pm2).
 
-### 8. Auto-construction — objectifs (règles du 22/09/2026)
+### 8. Auto-construction — objectifs (règles du 22/09/2026, revues le 05/10/2026)
 Ordre appliqué **par planète**, chaque bâtiment jusqu'à son objectif :
 
 | Ordre | Bâtiment | Objectif |
 |---|---|---|
-| 1 | Fabrique de robots | 12 |
-| 2 | Laboratoire de recherche | 10 |
-| 3 | Chantier spatial | 8 |
-| 4 | Mine de métal | 20 |
-| 5 | Mine de cristal | 20 |
-| 6 | Synthétiseur de deutérium | 20 |
-| 7 | Silo de missiles | 5 |
+| 1 | Laboratoire de recherche | 10 (Père : 12, pour Graviton) |
+| 2 | Usine de nanites | 4 |
+| 3 | Fabrique de robots | 12 |
+| 4 | Chantier spatial | 8 |
+| 5 | Mine de métal | 20 |
+| 6 | Mine de cristal | 20 |
+| 7 | Synthétiseur de deutérium | 20 |
+| 8 | Silo de missiles | 5 |
 
-Trois règles transverses :
-- **Ressources insuffisantes → on passe au suivant** de la liste (jamais d'attente bloquante).
-- **Réservoir plein** (≥ 98 % de la capacité, la production se perd) : avant d'améliorer la mine concernée, on agrandit `metalStorage` / `crystalStorage` / `deuteriumStorage`. Pas d'objectif de niveau : seulement quand c'est nécessaire.
-- **Énergie** : si l'amélioration retenue ferait passer le solde en négatif, on construit d'abord une **centrale de fusion**, à défaut une **centrale solaire** (BetweenLands : solaire uniquement, la fusion n'y existe pas). Si aucune centrale n'est finançable, l'amélioration est écartée — on ne laisse jamais l'énergie plonger.
+**Plafonds par planète** : `"plafonds": { "researchLab": 12 }` dans l'entrée d'une planète de `build-plan.json` remplace le max de cette clé
+sans recopier la liste (une clé absente de la liste est ajoutée à la fin). `/plan` affiche les plafonds qui diffèrent des défauts.
+**Migration** : `build-plan.json` n'est jamais copié par `/maj` ; au chargement, un plan sans `defaults.version` (ou d'une version
+antérieure) reçoit les nouveaux objectifs, le plafond labo 12 sur Père, `financement: true` et `graviton: true`, en conservant
+tout le reste (activations, `energyFirst` de BetweenLands, `graceMs`…), puis est réécrit. Idempotent ; une alerte 🏗 le signale.
+
+Règles transverses, dans l'ordre de décision :
+- **Énergie déjà négative** : une centrale (`energyFirst` de la planète) avant tout le reste.
+- **Ressources insuffisantes → on passe au suivant** de la liste (jamais d'attente bloquante). Le premier candidat écarté **uniquement**
+  pour manque de ressources (centrale si énergie négative, puis objectifs avec leurs substituts réservoir / centrale) est le **besoin**
+  de la planète : c'est lui que Père finance (8d). Pas de saut vers un objectif moins cher plus bas pour le financement.
+- **Réservoir plein** (≥ 98 % de la capacité, la production se perd) : avant d'améliorer la mine concernée, on agrandit `metalStorage` / `crystalStorage` / `deuteriumStorage`.
+- **Énergie** : si une amélioration ferait passer le solde en négatif, on construit d'abord une **centrale de fusion**, à défaut une **centrale solaire** (BetweenLands : solaire uniquement, la fusion n'y existe pas). Si aucune centrale n'est finançable, l'amélioration est écartée (et la centrale devient le besoin) — on ne laisse jamais l'énergie plonger.
+- **En dernier**, objectifs tous traités : réservoir ≥ 98 % alors que sa mine est **au plafond** → on l'agrandit, payé par le stock local uniquement (jamais un besoin financé par Père).
 
 Contraintes du jeu prises en compte : le **laboratoire** est intouchable pendant une recherche, le **chantier** pendant une production (`shipyardBusy`). Un bâtiment refusé par le jeu est écarté 30 min avec un seul message.
 Quand tous les objectifs d'une planète sont atteints, le bot **s'arrête** sur cette planète (`/plan` l'affiche) — les niveaux supérieurs restent à ta main via `/next`.
@@ -325,6 +344,15 @@ Un ordre **par planète**, persisté dans `next-build.json` (survit aux redémar
 - `/nexts` → ce qui est en attente : recherche + chaque planète.
 - Ressources manquantes ou refus du jeu : l'ordre **reste en attente**, réessai chaque minute, un seul message d'alerte par motif.
 - Passe avant l'auto-construction : tant qu'un ordre `/next` attend, les priorités par paliers ne s'appliquent pas sur cette planète.
+- **Labos d'abord** : une recherche en attente n'est pas lancée tant qu'une planète à autobuild activé n'a pas atteint son objectif `researchLab`
+  (sinon la recherche repart aussitôt et rebloque le labo pour des jours). Alerte au début de la retenue ; au plus 12 h après la libération
+  de la file de recherche, la retenue est levée avec une alerte. `/nexts` l'affiche.
+- **Graviton automatique** (`/autobuild graviton on|off`, allumé par défaut, réglage `defaults.graviton`) : quand aucune recherche n'est en
+  cours, que `player.research.graviton` vaut 0 et que `graviton` apparaît dans les options de recherche sans être verrouillé, le bot lance
+  `POST /research { planetId: Père, key: "graviton" }`, avant la recherche en attente. Refus du jeu : une alerte par raison, nouvel essai au plus
+  toutes les 10 min. Une fois lancée : alerte, puis on n'y revient plus (`gravitonAt` dans `next-build.json`). La clé `graviton` et son
+  apparition dans `researchOptions` avec le labo 12 sont [DÉDUIT] du codex (prérequis : labo 12 ; ouvre l'étoile de la mort) ; son coût
+  est inconnu tant qu'elle est verrouillée, un prérequis d'énergie comme dans OGame est possible [HYPOTHÈSE].
 
 ### 8c. `/fleetbuild` — construire des vaisseaux en colonie, payés par Père
 Pour répartir la production sur les chantiers des colonies. Père paie, la planète choisie construit.
@@ -335,8 +363,40 @@ Pour répartir la production sur les chantiers des colonies. Père paie, la plan
 - Refus clairs **avant tout envoi** : vaisseau verrouillé, pas de chantier, Père trop pauvre (avec le max finançable), transporteurs insuffisants (avec combien il en faut), aucun slot.
 - Commande persistée dans `fleet-build.json` (n°, planète, vaisseau, quantité, coût, id de flotte, `arrivesAt`, état). Tick à chaque poll, avant la collecte, `/next` et l'auto-construction : à l'arrivée (`arrivesAt` serveur ; à défaut, flotte plus en phase aller), si le stock de la planète couvre le coût → `POST /ships`, alerte `🚀 <planète> : N <vaisseau> en construction`, commande retirée.
 - Stock insuffisant (crédit pas encore visible, ressources dépensées, flotte rappelée) ou refus du jeu : la commande reste, au plus un POST par minute, une alerte par raison, **aucun abandon automatique**.
-- **Réservation** : entre l'arrivée et le lancement, l'auto-construction, `/next` (bâtiment et recherche lancée depuis cette planète) et la collecte ne touchent pas à la planète. Pendant le vol, aucune réservation. `/pause` ne suspend pas ces commandes.
+- **Réservation** : entre l'arrivée et le lancement, l'auto-construction, `/next` (bâtiment et recherche lancée depuis cette planète), la collecte, l'autodeut, l'autosupply et la flotte auto ne touchent pas à la planète. Pendant le vol, aucune réservation. `/pause` ne suspend pas ces commandes.
 - `/fleetbuild liste` → commandes en cours et leur état · `/fleetbuild annule <n°>` → retire la commande (le transport n'est **pas** rappelé : `/recall <fleetId>`).
+
+### 8d. Financement des bâtiments des colonies par Père (`buildfund.ts`)
+`/autobuild finance on|off` — **allumé par défaut** (`defaults.financement` dans `build-plan.json`). Pour chaque colonie à autobuild activé qui a
+un besoin (section 8), une commande au plus (jamais pour Père, qui paie sur place), persistée dans `build-fund.json` :
+- Père envoie le **manque** (coût − stock de la colonie, par ressource, recalculé à chaque voyage sur le stock réel), en un ou plusieurs
+  voyages : GT puis PT à quai sur Père, stock de Père moins `DEUT_RESERVE`, un slot libre (pas de slot réservé, comme le reste du bot).
+  Un seul transport en vol par commande ; le suivant part dès l'arrivée du précédent (2 min de délai pour le crédit).
+- Dès que le stock couvre le coût **actuel** (relu dans `buildOptions`) et que la file est libre : `POST /build`, alerte, commande retirée.
+- **Réservation** : dès qu'une commande existe (en route ou livrée), ni autobuild, ni `/next`, ni collecte, ni autodeut, ni autosupply, ni flotte auto
+  ne touchent à la colonie (`reserve.ts`, qui couvre aussi `/fleetbuild`).
+- Besoin disparu (niveau atteint, bâtiment lancé à la main, autobuild désactivé, plafond abaissé) : commande retirée avec alerte, ressources
+  laissées sur place. Refus du jeu : nouvel essai chaque minute, une alerte par raison, jamais d'abandon silencieux.
+- Garde-fou : si le double du manque initial a été livré sans le combler (stock plafonné par la capacité ?), plus de voyage, alerte.
+  Le dépassement de capacité par livraison est [DÉDUIT] de l'état du 05/10/2026 (Père à 6,4 M de cristal pour 6,1 M de capacité).
+- Rien vers une colonie menacée ni depuis Père menacé. `/pause` suspend tout. `off` : plus de nouvelle commande, celles en cours vont au bout.
+- `/autobuild finance` → état · `/autobuild finance annule <planète>` → retire la commande (transport non rappelé). Le détail est aussi dans `/plan`.
+
+### 8e. Flotte automatique (`/autofleet`, `autofleet.ts`)
+Un type de vaisseau par planète, **activé par défaut** sur les 5 (réglages dans `auto-fleet.json`, créé au premier chargement) :
+BetweenLands GT · Cousin croiseurs · Fils destructeurs · Oncle éclaireurs · Père VB, sans limite (`max` = nombre total visé à quai).
+- **Plancher de Père**, par ressource : le max, sur les planètes à autobuild activé, du coût de leur besoin (prochain objectif non atteint pour
+  Père) ; plus Graviton s'il est visible et pas lancé (Graviton auto allumé) ; plus `DEUT_RESERVE` sur le deut. **Surplus** = stock − plancher.
+- Rien tant qu'un financement de bâtiment (8d) attend encore des ressources de Père : les bâtiments d'abord.
+- Une décision toutes les 5 min (`AUTOFLEET_EVERY_MIN`), **un lot** par décision, pour la planète activée au chantier libre (pas de file, pas
+  `shipyardBusy`, pas de commande `/fleetbuild`, pas réservée, chantier pas en amélioration, pas menacée) servie le moins récemment.
+- Lot limité par le surplus, la soute à quai sur Père (hors Père), le `max`, et ~2 h de chantier (`AUTOFLEET_LOT_H`) pour que le chantier se
+  libère et puisse être amélioré ; pas de micro-lot sous 30 min de chantier (`AUTOFLEET_MIN_LOT_MIN`) sauf si le `max` le limite.
+- Lancement par `planFleetBuild` / `startFleetBuild` (transport depuis Père, lancement à l'arrivée, visible dans `/fleetbuild liste` ; direct sur Père).
+  Une alerte 🤖 par lot (planète, quantité, coût, surplus restant) ; erreur : une alerte par raison.
+- `/autofleet` → résumé (par planète : type, on/off, à quai, en file, prochain lot ou blocage ; plancher et surplus de Père) ·
+  `/autofleet <planète> on|off` · `/autofleet <planète> <vaisseau> [<n>|max]` (type, refusé s'il est verrouillé sur ce chantier ; `max` = illimité) ·
+  `/autofleet <planète> max <n>|illimite`. Immédiat, sans confirmation. `/pause` suspend ; rien si Père est menacée.
 
 ### 9. Capture de données
 - `incoming-samples.jsonl` : contenu brut de `incoming` / `menaces` / `alertesVives` dès qu'il change → **confirmer `parseThreats` au 1er échantillon**.
@@ -351,7 +411,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 **Aide** : `/tips` liste toutes les commandes en une ligne chacune ; `/tips <commande>` (ex. `/tips pirates`, `/tips p1`, `/tips autosupply`) détaille ce que fait une commande, ses arguments et la flotte envoyée par un preset.
 
 **Commandes courtes** (`/help`) : `/flotte` · `/joueur <nom>` · `/p0 …` · `/p1 …` · `/p2 …` · `/p3 …` · `/pirates [p1|p2|p3]` · `/scan_<joueur>` · `/explo …` · `/autoexplo …` · `/plan` · `/batiments <planète>` ·
-`/autobuild …` · `/autosupply …` · `/autodeut …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>` · `/maj`.
+`/autobuild …` · `/autobuild finance …` · `/autobuild graviton …` · `/autofleet …` · `/autosupply …` · `/autodeut …` · `/fleetbuild …` · `/status` · `/threats` · `/recall <id>` · flags · `/token <refresh_token>` · `/maj`.
 
 **Actions** (récapitulatif + ✅ Confirmer / ❌ Annuler, expire après 60 s ; les scans partent sans confirmation) — `/help full` :
 ```
@@ -367,7 +427,7 @@ Long polling (aucun port ouvert). Seul `TG_CHAT_ID` est obéi ; `TG_CHAT_ID` vid
 /fleetbuild [<planète> [<vaisseau> <qté>|max]]            (boutons, ressources envoyées par Père)
 /maj                                                       (mise à jour depuis GitHub, retour arrière auto)
 ```
-**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/autodeut [on|off]` (alias `/deut_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
+**Immédiat** (sans confirmation) : `/recall <fleetId>` · `/token` · `/save on|off` · `/autoexplo [on|off]` · `/autosupply [<planète>] [on|off]` (alias `/supply_auto`) · `/autodeut [on|off]` (alias `/deut_auto`) · `/collect on|off` · `/autobuild on|off [planète]` · `/autobuild finance on|off|annule <planète>` · `/autobuild graviton on|off` · `/autofleet …` (alias `/flotte_auto`) · `/fleetbuild liste` · `/fleetbuild annule <n°>` · `/pause` · `/resume`
 
 `<planète>` = nom (« Père »), id (`pl_2w`) ou coords (`6:4`).
 **Heartbeat** toutes les `HEARTBEAT_H` h (uptime, latence, polls) ; alerte si aucun poll réussi depuis > 2 min.
