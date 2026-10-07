@@ -23,7 +23,7 @@ ravitaillement entre planètes, constructions, recherches — chaque action rée
 Les actions automatiques historiques sont **désarmées par défaut** : le bot annonce ce qu'il *aurait* fait
 tant que vous ne l'avez pas armé (`/save on`, `/collect on`, `/autobuild <planète> on`…). Exceptions, **allumées par défaut**
 (décision du 05/10/2026) : le financement des bâtiments des colonies par Père, Graviton automatique et la flotte automatique
-(`/autobuild finance off`, `/autobuild graviton off`, `/autofleet <planète> off` pour les couper).
+(`/autobuild finance off`, `/autobuild graviton off`, `/autofleet off` ou `/autofleet <planète> off` pour les couper).
 
 > Le détail de l'API du jeu (auth, endpoints, formats, formules) est dans [`space-k-api.md`](space-k-api.md).
 > Chaque information y est marquée **[TESTÉ]** (appelée en live), **[BUNDLE]** (lue dans le code client),
@@ -395,7 +395,7 @@ BetweenLands GT · Cousin croiseurs · Fils destructeurs · Oncle éclaireurs ·
 - Lancement par `planFleetBuild` / `startFleetBuild` (transport depuis Père, lancement à l'arrivée, visible dans `/fleetbuild liste` ; direct sur Père).
   Une alerte 🤖 par lot (planète, quantité, coût, surplus restant) ; erreur : une alerte par raison.
 - `/autofleet` → résumé (par planète : type, on/off, à quai, en file, prochain lot ou blocage ; plancher et surplus de Père) ·
-  `/autofleet <planète> on|off` · `/autofleet <planète> <vaisseau> [<n>|max]` (type, refusé s'il est verrouillé sur ce chantier ; `max` = illimité) ·
+  `/autofleet on|off` (toutes les planètes d'un coup) · `/autofleet <planète> on|off` · `/autofleet <planète> <vaisseau> [<n>|max]` (type, refusé s'il est verrouillé sur ce chantier ; `max` = illimité) ·
   `/autofleet <planète> max <n>|illimite`. Immédiat, sans confirmation. `/pause` suspend ; rien si Père est menacée.
 
 ### 9. Capture de données

@@ -60,6 +60,13 @@ export function setAutoFleetEnabled(planetId: string, v: boolean): AutoFleetPlan
   log("AUTOFLEET", planetId, "=", v);
   return { ...conf[planetId] };
 }
+/** Active/désactive d'un coup toutes les planètes qui ont un vaisseau choisi ; renvoie celles dont l'état a changé. */
+export function setAutoFleetAll(v: boolean): string[] {
+  const changed = Object.keys(conf).filter((id) => conf[id].enabled !== v);
+  for (const id of changed) { conf[id] = { ...conf[id], enabled: v }; warned.delete(id); }
+  if (changed.length) { persist(); log("AUTOFLEET *", "=", v, changed.join(",")); }
+  return changed;
+}
 /** Change le type (refusé si inconnu ou verrouillé sur CE chantier) ; `max` : nombre visé, null = illimité, undefined = inchangé. */
 export function setAutoFleetKey(p: Planet, key: string, max?: number | null): AutoFleetPlanet {
   const c = shipChoices(p).find((x) => x.key === key);

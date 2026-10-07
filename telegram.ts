@@ -17,7 +17,7 @@ import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, gravitonStatus, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, setPlanDefault, financementOn, gravitonOn, BUILDING_KEYS } from "./autobuild.ts";
 import { buildFundSummary, cancelFund, fundOrders } from "./buildfund.ts";
-import { autoFleetSummary, setAutoFleetEnabled, setAutoFleetKey, setAutoFleetMax } from "./autofleet.ts";
+import { autoFleetSummary, setAutoFleetAll, setAutoFleetEnabled, setAutoFleetKey, setAutoFleetMax } from "./autofleet.ts";
 import { autoDeutSummary, DEUT_CAP } from "./deut.ts";
 import { SUPPLY_EVERY_H, setSupplyEnabled, supplyEnabled, supplySummary, supplyTargetStr } from "./supply.ts";
 import { cancelFleetBuild, costShort, fleetBuildMax, fleetBuildOrders, fleetBuildSummary, parseFleetBuildArgs, planFleetBuild, runFleetBuild, shipChoices, shipName } from "./fleetbuild.ts";
@@ -390,7 +390,7 @@ Objectifs dans l'ordre : labo 10 > nanites 4 > robots 12 > chantier 8 > mines 20
 Père envoie le coût exact (GT puis PT) ; à l'arrivée le chantier de la planète lance la construction. Sur Père : lancement immédiat.
 /fleetbuild liste — commandes en cours · /fleetbuild annule <n°> — retire (sans rappeler le transport)
 /autofleet — flotte automatique (ON par défaut sur les 5 planètes) : un type par planète, payé par le SURPLUS de Père au-dessus du plancher des bâtiments
-/autofleet <planète> on|off · /autofleet <planète> <vaisseau> [<n>|max] · /autofleet <planète> max <n>|illimite
+/autofleet on|off — toutes les planètes d'un coup · /autofleet <planète> on|off · /autofleet <planète> <vaisseau> [<n>|max] · /autofleet <planète> max <n>|illimite
 
 ━━━━━━━━━━━━━━━━━━━━
 🛡 DÉFENSE AUTO
@@ -558,14 +558,19 @@ async function handle(text: string, chatId: string) {
       return send(`Auto-construction ${p.name} : ${on ? "ON ✅" : "off"}${on && !getFlags().autobuild ? " (⏸ tout est en pause → /resume)" : ""}\n\n${planText(s)}`, chatId);
     }
     case "/autofleet": case "/flotte_auto": {
-      // /autofleet (résumé) · <planète…> on|off · <planète…> max <n>|illimite · <planète…> <vaisseau…> [<n>|max] — immédiat, sans confirmation
+      // /autofleet (résumé) · on|off (toutes les planètes) · <planète…> on|off · <planète…> max <n>|illimite · <planète…> <vaisseau…> [<n>|max] — immédiat, sans confirmation
       const s = await getState();
       if (!args.length) return send(autoFleetSummary(s), chatId);
       const last = args[args.length - 1].toLowerCase();
       const isOnOff = (x: string) => /^(on|off|1|0|true|false)$/i.test(x);
       const illimite = (x: string) => /^(illimit[ée]e?|aucun|none|infini)$/i.test(x);
       let head: string;
-      if (isOnOff(last) && args.length >= 2) {
+      if (isOnOff(last) && args.length === 1) {
+        const on = /^(on|1|true)$/i.test(last);
+        const changed = setAutoFleetAll(on);
+        const names = changed.map((id) => s.planets.find((p) => p.id === id)?.name ?? id);
+        head = `🤖 Flotte auto : ${on ? "ON" : "off"} sur toutes les planètes${names.length ? ` (${names.join(", ")})` : " (déjà le cas)"}`;
+      } else if (isOnOff(last) && args.length >= 2) {
         const p = planet(s, args.slice(0, -1).join(" "));
         const c = setAutoFleetEnabled(p.id, /^(on|1|true)$/i.test(last));
         head = `🤖 Flotte auto ${p.name} : ${c.enabled ? "ON" : "off"} (${shipName(c.key)})`;
