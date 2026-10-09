@@ -7,7 +7,7 @@ import { DEUT_CAP, DEUT_COLLECT_MIN } from "./deut.ts";
 import { SUPPLY_EVERY_H, supplyTargetStr } from "./supply.ts";
 import { EXPLO_AUTO_COUNT, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP, EXPLO_911_HOURS } from "./expedition.ts";
 import { OBJECTIFS } from "./autobuild.ts";
-import { DEUT_RESERVE, num } from "./core.ts";
+import { DEUT_RESERVE, TRANSPORT_MIN_LOAD, num } from "./core.ts";
 import { AUTOFLEET_EVERY_MS, AUTOFLEET_LOT_MS, AUTOFLEET_MIN_MS } from "./autofleet.ts";
 
 type Tip = { names: string[]; group: string; usage: string; desc: string; detail?: string | (() => string) };
@@ -163,7 +163,7 @@ const TIPS: Tip[] = [
   { names: ["finance", "financement"], group: G.build, usage: "/autobuild finance on|off|annule <pl>", desc: "Père finance les bâtiments des colonies (ON par défaut)",
     detail: () => [
       `Quand une colonie à autobuild activé a un « besoin » (premier bâtiment de son ordre de décision écarté UNIQUEMENT faute de ressources), Père lui livre le manque (coût − stock de la colonie, recalculé à chaque voyage) puis le bot lance le bâtiment dès que le stock le couvre et que la file est libre. Une commande au plus par colonie ; jamais pour Père (il paie sur place).`,
-      `Voyages : GT puis PT à quai sur Père, stock de Père moins ${fmtN(DEUT_RESERVE)} deut, un slot libre ; plusieurs voyages si la soute ne suffit pas, un seul en vol à la fois par commande. Rien vers une planète menacée ni depuis Père menacé.`,
+      `Voyages : GT puis PT à quai sur Père, stock de Père moins ${fmtN(DEUT_RESERVE)} deut, un slot libre ; plusieurs voyages si la soute ne suffit pas, un seul en vol à la fois par commande. Chaque voyage emporte au moins ${fmtN(TRANSPORT_MIN_LOAD)} (TRANSPORT_MIN_LOAD, un GT plein), sauf le dernier qui comble tout le manque ; sinon on attend (une alerte). Rien vers une planète menacée ni depuis Père menacé.`,
       `Dès qu'une commande existe, la colonie est réservée jusqu'au lancement : ni autobuild, ni /next, ni collecte, ni autodeut, ni autosupply, ni flotte auto n'y touchent. La flotte auto attend tant qu'un financement manque de ressources.`,
       `Besoin disparu (niveau atteint, bâtiment lancé à la main, autobuild désactivé) : commande retirée avec alerte, les ressources restent sur place. Refus du jeu : nouvel essai chaque minute, une alerte par raison.`,
       `/autobuild finance on|off — allumé par défaut ; off = plus de nouvelle commande, celles en cours vont au bout · /autobuild finance — état · /autobuild finance annule <planète> — retire la commande (le transport n'est pas rappelé). Détail dans /plan. /pause suspend tout.`,
@@ -174,7 +174,7 @@ const TIPS: Tip[] = [
     detail: () => [
       `Un type de vaisseau par planète, construit sur son chantier et payé par Père, uniquement avec le SURPLUS au-dessus du plancher : le coût du prochain bâtiment de chaque planète à autobuild (besoin des colonies, prochain objectif de Père), plus Graviton s'il est visible et pas lancé, plus ${fmtN(DEUT_RESERVE)} deut. Rien tant qu'un financement de bâtiment attend.`,
       `Par défaut, toutes activées : BetweenLands GT, Cousin croiseurs, Fils destructeurs, Oncle éclaireurs, Père VB, sans limite.`,
-      `Une décision toutes les ${Math.round(AUTOFLEET_EVERY_MS / 60_000)} min, un lot par décision, pour la planète au chantier libre servie le moins récemment. Lot ≈ ${Math.round(AUTOFLEET_LOT_MS / 3_600_000)} h de chantier au plus (le chantier se libère pour ses améliorations), limité aussi par le surplus, les transporteurs à quai sur Père et le max ; rien sous ${Math.round(AUTOFLEET_MIN_MS / 60_000)} min de chantier sauf si le max le limite (AUTOFLEET_EVERY_MIN, AUTOFLEET_LOT_H, AUTOFLEET_MIN_LOT_MIN).`,
+      `Une décision toutes les ${Math.round(AUTOFLEET_EVERY_MS / 60_000)} min, un lot par décision, pour la planète au chantier libre servie le moins récemment. Lot ≈ ${Math.round(AUTOFLEET_LOT_MS / 3_600_000)} h de chantier au plus (le chantier se libère pour ses améliorations), limité aussi par le surplus, les transporteurs à quai sur Père et le max ; rien sous ${Math.round(AUTOFLEET_MIN_MS / 60_000)} min de chantier sauf si le max le limite (AUTOFLEET_EVERY_MIN, AUTOFLEET_LOT_H, AUTOFLEET_MIN_LOT_MIN). Hors Père, rien non plus sous ${fmtN(TRANSPORT_MIN_LOAD)} de cargaison (TRANSPORT_MIN_LOAD, un GT plein) quand le surplus ou la soute limite le lot.`,
       `Lancement comme /fleetbuild : transport depuis Père puis lancement à l'arrivée (visible dans /fleetbuild liste), direct sur Père. Une alerte par lot.`,
       `/autofleet — résumé : par planète type, on/off, à quai, en file, prochain lot ou blocage ; plancher et surplus de Père.`,
       `/autofleet fils on|off · /autofleet fils croiseurs [50|max] (change le type, refusé s'il est verrouillé ; 50 = nombre visé à quai, max = illimité) · /autofleet fils max 50|illimite. Immédiat, sans confirmation. /pause suspend ; rien si Père ou la planète est menacée.`,

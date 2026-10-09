@@ -16,6 +16,9 @@ export const CARGO: Record<string, number> = {
   battleship: 1_500, colonyShip: 7_500, espionageProbe: 5, recycler: 20_000, pathfinder: 10_000,
   bomber: 500, destroyer: 2_000, battlecruiser: 750, deathStar: 1_000_000,
 };
+// Cargaison minimale d'un transport automatique (financement, flotte auto, autosupply, deut→Père) : un GT plein par défaut,
+// le carburant d'un voyage ne vaut pas moins.
+export const TRANSPORT_MIN_LOAD = num("TRANSPORT_MIN_LOAD", CARGO.largeCargo);
 export const NEVER_FLY = new Set(["solarSatellite"]);
 // Noms affichés (vaisseaux.md) — les clés API restent en anglais
 export const SHIP_FR: Record<string, string> = {

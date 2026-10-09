@@ -1,7 +1,8 @@
 // Financement des bâtiments des colonies par Père (/autobuild finance on|off, allumé par défaut, réglage dans build-plan.json).
 // Quand une colonie à autobuild activé a un « besoin » (autobuild.ts : premier candidat écarté faute de ressources), une commande est
 // créée (une au plus par planète, jamais pour Père qui paie sur place) : Père livre le MANQUE (coût − stock de la colonie, recalculé à
-// chaque voyage sur le stock réel) en un ou plusieurs voyages — GT puis PT à quai, stock de Père moins DEUT_RESERVE, un slot libre —
+// chaque voyage sur le stock réel) en un ou plusieurs voyages — GT puis PT à quai, stock de Père moins DEUT_RESERVE, un slot libre,
+// au moins TRANSPORT_MIN_LOAD (un GT plein) par voyage sauf le dernier qui comble tout le manque (sinon on attend, une alerte) —
 // puis, dès que le stock couvre le coût ACTUEL et que la file est libre, le bot lance le bâtiment (POST /build) et retire la commande.
 // Dès qu'une commande existe (en route OU livrée), la planète est RÉSERVÉE (reserve.ts) jusqu'au lancement.
 // Besoin disparu (niveau atteint, bâtiment lancé à la main, autobuild désactivé, plafond abaissé) : commande retirée avec alerte, les
@@ -12,7 +13,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, DEUT_RESERVE, alert, api, etaStr, fillCargo, flags, fleetResultStr, fmtNum, log, prepareFleet, sendFleet, shipsStr,
+  PERE, CARGO, DEUT_RESERVE, TRANSPORT_MIN_LOAD, alert, api, etaStr, fillCargo, flags, fleetResultStr, fmtNum, log, prepareFleet, sendFleet, shipsStr,
 } from "./core.ts";
 import { buildCtx, financementOn, loadPlan, nextBuilding, planetPlan } from "./autobuild.ts";
 import { fleetBuildOrders } from "./fleetbuild.ts";
@@ -74,7 +75,7 @@ const enVol = (o: FundOrder, s: State) => {
   return !!o.arrivesAt && s.now < o.arrivesAt;
 };
 export type FundTrip = { ships: Record<string, number>; cargo: Res } | { why: string; code: string };
-/** Un voyage Père → colonie pour combler `manque` : stock de Père (DEUT_RESERVE gardé), soute à quai (GT puis PT), slot libre. Aucun POST. */
+/** Un voyage Père → colonie pour combler `manque` : stock de Père (DEUT_RESERVE gardé), soute à quai (GT puis PT), slot libre, au moins TRANSPORT_MIN_LOAD sauf voyage qui comble tout. Aucun POST. */
 export function planFundTrip(s: State, pere: Planet, manque: Res): FundTrip {
   const dispo: Res = {
     metal: Math.floor(pere.resources.metal), crystal: Math.floor(pere.resources.crystal), deuterium: Math.max(0, Math.floor(pere.resources.deuterium) - DEUT_RESERVE),
@@ -91,6 +92,9 @@ export function planFundTrip(s: State, pere: Planet, manque: Res): FundTrip {
   if (!cap) return { code: "cargo", why: "aucun transporteur à quai sur Père" };
   if (s.fleetSlots.used >= s.fleetSlots.total) return { code: "slot", why: `aucun slot de flotte libre (${s.fleetSlots.used}/${s.fleetSlots.total})` };
   if (cap < total) cargo = fillCargo(cargo, cap, 0); // soute insuffisante : priorité deut > cristal > métal, le reste au voyage suivant
+  // Voyage trop petit (carburant pour rien) : on attend, sauf s'il comble tout le manque (dernier voyage)
+  if (sum(cargo) < TRANSPORT_MIN_LOAD && sum(cargo) < sum(manque))
+    return { code: "min", why: `voyage trop petit : ${fmtNum(sum(cargo))} à livrer sur ${fmtNum(sum(manque))} manquants, minimum ${fmtNum(TRANSPORT_MIN_LOAD)} (un GT plein) — ${cap < total ? "pas assez de soute à quai sur Père" : "Père n'a pas assez de stock hors réserve"}` };
   return { ships, cargo };
 }
 /** Raison pour laquelle un financement retient encore Père (null = aucun) : la flotte auto attend (les bâtiments d'abord). */

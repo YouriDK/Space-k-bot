@@ -4,13 +4,14 @@
 // visible et pas encore lancé (Graviton auto allumé) ; plus DEUT_RESERVE sur le deut. Surplus = stock de Père − plancher (jamais négatif).
 // Rien tant qu'un financement de bâtiment (buildfund.ts) attend encore des ressources de Père. Une décision toutes les 5 min au plus,
 // UN lot par décision, pour la planète activée au chantier libre servie le moins récemment. Lot limité par le surplus, la soute à quai
-// sur Père (hors Père), `max` (nombre visé à quai) et ~2 h de chantier ; pas de micro-lot (< 30 min de chantier sauf si `max` le limite).
+// sur Père (hors Père), `max` (nombre visé à quai) et ~2 h de chantier ; pas de micro-lot (< 30 min de chantier sauf si `max` le limite,
+// ni hors Père une cargaison < TRANSPORT_MIN_LOAD — un GT plein — limitée par le surplus ou la soute).
 // Lancement via planFleetBuild / startFleetBuild (transport depuis Père puis lancement à l'arrivée ; direct sur Père).
 // Réglages persistés dans auto-fleet.json, créé au premier chargement avec les 5 planètes ACTIVÉES (types choisis le 05/10/2026, sans max).
 // /pause suspend tout ; rien si Père ou la planète est menacée, ni sur une planète réservée.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Planet, Res, State } from "./spacek-client.ts";
-import { PERE, CARGO, DEUT_RESERVE, alert, etaStr, fmtNum, isPaused, log, num } from "./core.ts";
+import { PERE, CARGO, DEUT_RESERVE, TRANSPORT_MIN_LOAD, alert, etaStr, fmtNum, isPaused, log, num } from "./core.ts";
 import { buildCtx, gravitonOn, loadPlan, nextBuilding, nextObjective, planetPlan } from "./autobuild.ts";
 import { fleetBuildOrders, planFleetBuild, shipChoices, shipName, startFleetBuild } from "./fleetbuild.ts";
 import { fundNeedsPere } from "./buildfund.ts";
@@ -142,10 +143,12 @@ export function autoFleetLot(s: State, p: Planet, c: AutoFleetPlanet, surplus: R
     const by = limits.max < 1 ? `max atteint (${p.ships[c.key] ?? 0}/${c.max})` : limits.surplus < 1 ? "surplus de Père insuffisant pour 1 vaisseau" : "pas assez de transporteurs à quai sur Père";
     return { qty: 0, why: by, limits };
   }
-  if (qty * sc.unitMs < AUTOFLEET_MIN_MS && qty < limits.max) {
-    const by = limits.surplus <= qty ? "surplus" : limits.soute <= qty ? "soute" : "?";
+  const by = limits.surplus <= qty ? "surplus" : limits.soute <= qty ? "soute" : "?";
+  if (qty * sc.unitMs < AUTOFLEET_MIN_MS && qty < limits.max)
     return { qty: 0, why: `micro-lot : ${qty} ${sc.name} = ${etaStr(qty * sc.unitMs)} de chantier (< ${etaStr(AUTOFLEET_MIN_MS)}, limité par ${by})`, limits };
-  }
+  // Hors Père (transport) : cargaison sous un GT plein et limitée par le surplus ou la soute → on attend (max / durée : attendre ne changerait rien)
+  if (p.id !== PERE && qty * unit < TRANSPORT_MIN_LOAD && qty < limits.max && qty < limits.duree)
+    return { qty: 0, why: `micro-lot : ${qty} ${sc.name} = ${fmtNum(qty * unit)} de cargaison (< ${fmtNum(TRANSPORT_MIN_LOAD)}, un GT plein, limité par ${by})`, limits };
   return { qty, limits };
 }
 /** Chantier libre pour la flotte auto, sinon la raison. */

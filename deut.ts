@@ -3,13 +3,13 @@
 // le carburant est pris sur les DEUT_CAP qui restent. Aucun état persisté (le stock de la colonie fait foi) ; une évaluation par minute au plus.
 // Cohérent avec l'auto-ravitaillement : quand le flag est actif, supplyTarget() plafonne sa cible de deut à DEUT_CAP (supply.ts).
 import type { Planet, State } from "./spacek-client.ts";
-import { PERE, CARGO, alert, flags, fleetResultStr, fmtNum, isPaused, log, num, prepareFleet, same, sendFleet, shipsStr } from "./core.ts";
+import { PERE, CARGO, TRANSPORT_MIN_LOAD, alert, flags, fleetResultStr, fmtNum, isPaused, log, num, prepareFleet, same, sendFleet, shipsStr } from "./core.ts";
 import { planetReserved, reservedWhy } from "./reserve.ts";
 import { parseThreats, threatenedPlanetIds } from "./threats.ts";
 
 // ================= CONFIG =================
 export const DEUT_CAP = num("DEUT_CAP", 150_000);               // plafond de deut sur chaque planète autre que Père
-export const DEUT_COLLECT_MIN = num("DEUT_COLLECT_MIN", 10_000); // pas de vol pour moins que ça
+export const DEUT_COLLECT_MIN = num("DEUT_COLLECT_MIN", TRANSPORT_MIN_LOAD); // pas de vol pour moins que ça (un GT plein par défaut)
 const DEUT_EVAL_MS = 60_000;     // une évaluation par minute au plus
 const DEUT_RETRY_MS = 15 * 60_000; // après un envoi refusé par le jeu, délai avant de réessayer vers la même colonie
 // ==========================================

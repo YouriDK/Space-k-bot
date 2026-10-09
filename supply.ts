@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Planet, Res, State } from "./spacek-client.ts";
 import {
-  PERE, CARGO, DEUT_RESERVE, alert, capacity, fillCargo, flags, fleetResultStr, fmtDur, fmtNum, isPaused, log, num, same, sendFleetFuelSafe, shipsStr, xy,
+  PERE, CARGO, DEUT_RESERVE, TRANSPORT_MIN_LOAD, alert, capacity, fillCargo, flags, fleetResultStr, fmtDur, fmtNum, isPaused, log, num, same, sendFleetFuelSafe, shipsStr, xy,
 } from "./core.ts";
 import { parseThreats, threatenedPlanetIds } from "./threats.ts";
 import { DEUT_CAP } from "./deut.ts";
@@ -28,7 +28,7 @@ export const supplyTarget = (planetId: string): Res => {
 };
 export const SUPPLY_EVERY_H = num("SUPPLY_EVERY_H", 12);
 const SUPPLY_EVERY_MS = SUPPLY_EVERY_H * 3_600_000;
-const SUPPLY_MIN_SEND = num("SUPPLY_MIN_SEND", 20_000); // pas de vol pour moins que ça
+const SUPPLY_MIN_SEND = num("SUPPLY_MIN_SEND", TRANSPORT_MIN_LOAD); // pas de vol pour moins que ça (un GT plein par défaut)
 const SUPPLY_RETRY_MS = 15 * 60_000;  // après un envoi refusé par le jeu, délai avant de réessayer vers la même colonie
 const FILE = "supply.json";
 // ==========================================

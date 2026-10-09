@@ -223,12 +223,12 @@ Les flags se changent à chaud via Telegram (`/save on`, `/collect on`, `/autoex
 - **Auto-ravitaillement** (`supply.ts`) : activé **par colonie** avec `/autosupply <planète> on|off` (alias `/supply_auto`), tout est désactivé par défaut. `/autosupply <planète>` donne l'état (prochain passage, manque, ce qui partirait), `/autosupply` celui de toutes les colonies, `/autosupply off` désactive tout.
   Une vérification toutes les **12 h** par colonie active (`SUPPLY_EVERY_H`) ; activer une colonie la rend due tout de suite (1er passage dans la minute). Activations et dernières vérifications sont persistées dans `supply.json` : un redémarrage ne relance pas de passage avant l'échéance.
   À chaque passage, cible **500 000 métal / 350 000 cristal / 150 000 deut** (`SUPPLY_TARGET_METAL`, `SUPPLY_TARGET_CRYSTAL`, `SUPPLY_TARGET_DEUT` dans `.env` ; surcharge par planète possible via `SUPPLY` dans supply.ts).
-  Si le manque total atteint `SUPPLY_MIN_SEND` (20 000), Père envoie le complément arrondi au millier, GT d'abord puis PT en complément dans la même flotte ; alerte `📦 SUPPLY` avec l'heure du prochain passage.
+  Si le manque total atteint `SUPPLY_MIN_SEND` (par défaut `TRANSPORT_MIN_LOAD`, 25 000, un GT plein), Père envoie le complément arrondi au millier, GT d'abord puis PT en complément dans la même flotte ; alerte `📦 SUPPLY` avec l'heure du prochain passage.
   Limité au stock de Père (garde `DEUT_RESERVE`), sans plafond lié à la capacité de la destination. L'échéance est consommée quand la vérification aboutit (envoi parti, ou rien à envoyer — y compris Père trop pauvre).
   Elle ne l'est pas, et on réessaie chaque minute, si Père ou la colonie est menacée, si un transport est déjà en route vers la colonie, ou s'il n'y a ni transporteur à quai ni slot libre.
   Envoi refusé par le jeu (carburant, etc.) → une alerte `📦 SUPPLY KO`, nouvel essai vers cette colonie 15 min plus tard ; les autres colonies sont servies quand même. `/pause` suspend tout, les échéances restent intactes.
   Sur une colonie active, la collecte (section 3) ne la redescend pas sous sa cible (pas d'aller-retour).
-- **Deut → Père** (`deut.ts`, `/autodeut on|off`, alias `/deut_auto`, flag `deut`, désactivé par défaut) : aucune colonie ne garde plus de **150 000 deut** (`DEUT_CAP`). Une évaluation par minute ; l'excédent part vers Père avec les transporteurs **sur la colonie** (GT puis PT, une seule flotte, deut seul), pourvu qu'il atteigne `DEUT_COLLECT_MIN` (10 000). Le carburant est pris sur les 150 000 qui restent.
+- **Deut → Père** (`deut.ts`, `/autodeut on|off`, alias `/deut_auto`, flag `deut`, désactivé par défaut) : aucune colonie ne garde plus de **150 000 deut** (`DEUT_CAP`). Une évaluation par minute ; l'excédent part vers Père avec les transporteurs **sur la colonie** (GT puis PT, une seule flotte, deut seul), pourvu qu'il atteigne `DEUT_COLLECT_MIN` (par défaut `TRANSPORT_MIN_LOAD`, 25 000, un GT plein). Le carburant est pris sur les 150 000 qui restent.
   Rien si Père ou la colonie est menacée, si la colonie est réservée (`/fleetbuild`, financement de bâtiment) ou si un transport en part déjà vers Père. Aucun transporteur sur place → une alerte `⛽` par colonie (pas d'envoi) ; envoi refusé → alerte `⛽ DEUT KO`, nouvel essai 15 min plus tard. `/autodeut` seul donne l'état. Avec le flag actif, la cible de deut de l'auto-ravitaillement est plafonnée à `DEUT_CAP`.
 
 ### 3. Collecte (`collect`) — colonies → Père
@@ -372,6 +372,8 @@ un besoin (section 8), une commande au plus (jamais pour Père, qui paie sur pla
 - Père envoie le **manque** (coût − stock de la colonie, par ressource, recalculé à chaque voyage sur le stock réel), en un ou plusieurs
   voyages : GT puis PT à quai sur Père, stock de Père moins `DEUT_RESERVE`, un slot libre (pas de slot réservé, comme le reste du bot).
   Un seul transport en vol par commande ; le suivant part dès l'arrivée du précédent (2 min de délai pour le crédit).
+- Voyage d'au moins `TRANSPORT_MIN_LOAD` (25 000, un GT plein) sauf le dernier qui comble tout le manque ; sinon (stock hors réserve ou soute
+  à quai insuffisants sur Père) on attend, une alerte.
 - Dès que le stock couvre le coût **actuel** (relu dans `buildOptions`) et que la file est libre : `POST /build`, alerte, commande retirée.
 - **Réservation** : dès qu'une commande existe (en route ou livrée), ni autobuild, ni `/next`, ni collecte, ni autodeut, ni autosupply, ni flotte auto
   ne touchent à la colonie (`reserve.ts`, qui couvre aussi `/fleetbuild`).
@@ -391,7 +393,8 @@ BetweenLands GT · Cousin croiseurs · Fils destructeurs · Oncle éclaireurs ·
 - Une décision toutes les 5 min (`AUTOFLEET_EVERY_MIN`), **un lot** par décision, pour la planète activée au chantier libre (pas de file, pas
   `shipyardBusy`, pas de commande `/fleetbuild`, pas réservée, chantier pas en amélioration, pas menacée) servie le moins récemment.
 - Lot limité par le surplus, la soute à quai sur Père (hors Père), le `max`, et ~2 h de chantier (`AUTOFLEET_LOT_H`) pour que le chantier se
-  libère et puisse être amélioré ; pas de micro-lot sous 30 min de chantier (`AUTOFLEET_MIN_LOT_MIN`) sauf si le `max` le limite.
+  libère et puisse être amélioré ; pas de micro-lot sous 30 min de chantier (`AUTOFLEET_MIN_LOT_MIN`) sauf si le `max` le limite,
+  ni, hors Père (transport), sous `TRANSPORT_MIN_LOAD` (25 000, un GT plein) de cargaison quand le surplus ou la soute limite le lot.
 - Lancement par `planFleetBuild` / `startFleetBuild` (transport depuis Père, lancement à l'arrivée, visible dans `/fleetbuild liste` ; direct sur Père).
   Une alerte 🤖 par lot (planète, quantité, coût, surplus restant) ; erreur : une alerte par raison.
 - `/autofleet` → résumé (par planète : type, on/off, à quai, en file, prochain lot ou blocage ; plancher et surplus de Père) ·
