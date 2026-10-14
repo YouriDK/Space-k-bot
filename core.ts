@@ -176,9 +176,15 @@ export async function postFleet(payload: FleetPayload, prevIds?: Set<string>): P
     f?.arrivesAt ? `arrivée dans ${etaStr(f.arrivesAt - now)}` : "");
   return { fleetId: f?.id, arrivesAt: f?.arrivesAt, returnsAt: f?.returnsAt, ships: payload.ships, state };
 }
+/** Heure d'horloge (Paris) d'un instant futur, précise à la seconde ; la date s'ajoute si ce n'est pas aujourd'hui. */
+export const clockStr = (at: number, now = Date.now()) => {
+  const day = (t: number) => new Date(t).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" });
+  const h = new Date(at).toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris" });
+  return day(at) === day(now) ? h : `${new Date(at).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", weekday: "short", day: "numeric", month: "numeric" })} ${h}`;
+};
 export const fleetResultStr = (r: FleetResult) => {
   const now = (r.state as any)?.now ?? Date.now();
-  return `flotte ${r.fleetId ?? "(id inconnu)"}${r.arrivesAt ? ` · arrivée dans ${etaStr(r.arrivesAt - now)}` : ""}${r.returnsAt ? ` · retour dans ${etaStr(r.returnsAt - now)}` : ""}`;
+  return `flotte ${r.fleetId ?? "(id inconnu)"}${r.arrivesAt ? ` · arrivée à ${clockStr(r.arrivesAt, now)}` : ""}${r.returnsAt ? ` · retour à ${clockStr(r.returnsAt, now)}` : ""}`;
 };
 export const sendFleet = (plan: FleetPlan, prevIds?: Set<string>) => postFleet(plan.payload, prevIds);
 

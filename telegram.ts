@@ -12,7 +12,7 @@ import { PRESETS, planPreset, presetsHelp } from "./presets.ts";
 import { findPlayer, playerSummary, planScan, runScan } from "./scan.ts";
 import { planExpedition, autoExploSummary, EXPLO_AUTO_COUNT, EXPLO_AUTO_HOURS, EXPLO_DEUT_KEEP } from "./expedition.ts";
 import { piratesSummary } from "./pirates.ts";
-import { tipFor, tipsIndex } from "./tips.ts";
+import { menuCommands, tipFor, tipsIndex } from "./tips.ts";
 import { salvageSummary } from "./salvage.ts";
 import { bestLab, buildChoices, clearNext, clearNextResearch, getNext, getNextResearch, gravitonStatus, nextSummary, researchChoices, setNext, setNextResearch } from "./nextbuild.ts";
 import { buildingsSummary, planSummary, setPlanetEnabled, planetPlan, loadPlan, setPlanDefault, financementOn, gravitonOn, BUILDING_KEYS } from "./autobuild.ts";
@@ -820,6 +820,7 @@ if (CHAT_ID) {
   send(`🚀 spacek-bot démarré\n${flagsStr(getFlags())}\n/help pour les commandes`);
   heartbeat();
   watch();
+  tg("setMyCommands", { commands: menuCommands() }).catch((e: any) => log("TG setMyCommands KO", e.message)); // bouton « Menu » de Telegram
 } else {
   log("TG_CHAT_ID vide : écris au bot pour obtenir ton chat id. watch() non lancé.");
 }

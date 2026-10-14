@@ -272,3 +272,9 @@ export function tipsIndex(): string {
     "ℹ️ /tips <commande> — le détail (ex. /tips pirates, /tips p1)",
   ].join("\n");
 }
+
+/** Menu Telegram (bouton « Menu » / setMyCommands) : une entrée par vraie commande, sans alias ni sous-commandes (finance, graviton)
+ *  ni génériques avancées. Telegram : nom [a-z0-9_]{1,32}, description 1–256 caractères. */
+export const menuCommands = () => TIPS
+  .filter((t) => t.group !== G.generic && t.usage.startsWith(`/${t.names[0]}`))
+  .map((t) => ({ command: t.names[0], description: t.desc.slice(0, 256) }));
