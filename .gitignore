@@ -25,3 +25,6 @@ galaxy-snapshot.json
 .version
 update.log
 .update-lock/
+
+# Archive de l état du Note 9 (données + secrets), jamais commitée
+archive/
